@@ -1,0 +1,64 @@
+\documentclass[12pt,a4paper,twoside,openright]{report}
+
+\pagestyle{plain}
+
+\input{inc/packages}
+% \input{inc/style}
+
+\makeglossaries
+\loadglsentries{inc/glossary}
+
+\titleformat{\chapter}
+  {\normalfont\huge\bfseries} % Format for the whole title
+  {\thechapter.} % Label (chapter number)
+  {20pt} % Space between number and title
+  {\Huge} % Format for the title text
+\titlespacing*{\chapter}{0pt}{0pt}{30pt}
+
+\begin{document}
+
+\pagenumbering{gobble}
+\include{inc/title}
+
+\newgeometry{hmargin={24mm,24mm}}
+
+\cleardoublepage
+\include{chapters/dedication}
+\include{chapters/acknowledgements}
+\include{chapters/abstract}
+
+\pagenumbering{roman}
+
+\setcounter{tocdepth}{3}
+\setcounter{secnumdepth}{3}
+\tableofcontents
+\newpage    
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\include{chapters/introduction}
+
+\cleardoublepage
+\include{chapters/chapter1}
+\cleardoublepage
+\include{chapters/chapter2}
+\cleardoublepage
+\include{chapters/chapter3}
+\cleardoublepage
+\include{chapters/chapter4}
+\cleardoublepage
+\include{chapters/chapter5}
+\cleardoublepage
+\include{chapters/conclusion}
+
+\include{inc/appendix}
+
+\printglossary[type=\acronymtype,title={Acronyms}]
+\let\cleardoublepage\clearpage
+\printglossary[type=main, title={Glossary},style=mcolindex]
+
+\bibliographystyle{unsrt}
+\bibliography{inc/bibliography}
+
+\end{document}

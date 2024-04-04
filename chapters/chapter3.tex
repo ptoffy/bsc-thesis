@@ -1,0 +1,302 @@
+\chapter{JSON Web Tokens}
+In the context of web development, ensuring secure communication and efficient authentication mechanisms is important.  There are many technologies that allow that, though the \gls{jwt} specification has become one of the standard ways of communicating, likely due to its simplicity and versatility. \textit{\gls{jwt} is a compact, URL-safe means of representing
+claims to be transferred between two parties.} \cite{rfc7519-jwt} \gls{jwt}s are based on JSON, which is a format used to serialise structured data.\cite{rfc8259-json} It is widely used in a number of scenarios such as configuration files, storage (some NoSQL databases use it to store data) and, finally, data interchange. \gls{jwt}s allow transferring of JSON data between parties in a safe way as the tokens are digitally signed using a signing algorithm.
+\subsubsection*{Base64 and Base64URL Encoding}
+Before delving into the specifics of a \gls{jwt}'s structure, it is essential to understand the \gls{encoding} techniques that make JWTs both compact and web-safe: base64 and base64URL \gls{encoding}. These \gls{encoding} schemes allow JSON data to be easily transformed into a format that can be safely transmitted over web protocols.
+\paragraph{Base64 Encoding} 
+Base64 is a binary-to-text \gls{encoding} scheme that represents binary data in an ASCII string format by translating it into a radix-64 representation. It is widely used in various applications, including email via MIME, as well as storing complex data in XML or JSON formats.
+The process involves dividing the input binary data into sequences of 24 bits (3 bytes). Each 24-bit sequence is then split into four 6-bit groups, with each group mapped to a single character in the base64 alphabet, which consists of 64 characters: A-Z, a-z, 0-9, +, and /. This method allows binary data to be represented in a text format, which is particularly useful for data transmission over text-based protocols. \cite{rfc4648-b64}
+\paragraph{Base64URL Encoding} 
+While base64 \gls{encoding} is versatile, it includes characters (+ and /) that can have special meanings in URLs and file systems. Base64URL solves this issue by replacing + with -, and / with \_, making the encoded data safe for URL and filename usage. Additionally, base64URL \gls{encoding} omits padding characters (=).
+This URL-safe variant is important for JWTs, as it ensures the token's components can be safely transmitted in URLs. This is fundamental as JWTs are often used to authenticate users in web applications and in such an environment data is transmitted using URLs. \cite{rfc4648-b64}
+
+\section{Structure of a JWT}
+A JWT typically consists of three base64URL encoded strings divided by a dot ('.') character:
+\begin{itemize}
+    \item Header: a number of JSON fields which reveal some information about the token itself, for example what algorithms was used to sign it and the type of the token (JWT, JWE etc). The only mandatory field is the \lstinline{alg} one, but more  optional fields can be added too. This is how a JWT header typically looks:
+    \begin{lstlisting}
+        {
+          "alg": "HS256",
+          "typ": "JWT"
+        }
+    \end{lstlisting}
+    This header contains two fields: the \lstinline{alg} field indicating that the token was signed using the HMAC algorithm with SHA-256, and the \lstinline{typ} field, indicating that that is a JWT.
+    This JSON is then base64URL encoded and will look like this:
+    \begin{lstlisting}
+        eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0
+    \end{lstlisting}
+    \note{Notable fields}{
+    Some notable fields which will be used later on are:
+    \begin{itemize}[noitemsep,topsep=0pt]
+        \item \lstinline{kid}: the \lstinline{kid} or key identifier field is used to identify the key which the token was signed with and needs to be verified with out of a key set;
+        \item \lstinline{x5c}: a DER formatted \gls{x509} certificate chain used to certify the authenticity of the token, with each certificate certifying the next one up to the root \gls{ca};
+    \end{itemize}
+    }
+    \cite{rfc7515-jws}
+    \item Payload: contains the actual data that needs to be transmitted in the form of JSON \gls{claim}s. There are some default claims, such as the token's expiry and issuer and there can be custom claims. This is how a payload typically looks:
+    \begin{lstlisting}
+    {
+      "sub": "1234567890",
+      "name": "John Doe",
+      "iat": 1516239022
+    }
+    \end{lstlisting}
+    In this example there is three claims: the first one is the \lstinline{sub} which indicates the subject or whom the token refers to. The third one is the \lstinline{iat} claim, or "issued at", which indicates when the token was signed using \gls{unix-time}. The second one, \lstinline{name}, is a custom claim indicating some name. When base64URL encoded, this payload looks like:
+    \begin{lstlisting}
+        eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4iLCJpYXQiOjE1MTYyMzkwMjJ9
+    \end{lstlisting}
+    \item Signature: string used to secure and verify that the token has not been altered. When using a private key to sign the token, the signature also asserts that the issuer has the private key and can therefore be trusted. The signature is created by concatenating the base64URL encoded header and payload using a dot ('.'). Afterwards a cryptographic algorithm is applied to that string resulting in the signature, which is appended to the initial token using another dot ('.') character. Using HMAC-256 and the \textit{very} secure secret key "secret", the final token looks like this (newlines are inserted for display purposes):
+    \begin{lstlisting}
+    eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+    .
+    eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4iLCJpYXQiOjE1MTYyMzkwMjJ9
+    .
+    4hrUcwXkLeE3O-pwPHgS860Nt-Lq_3PNoyHXnBTyjIY
+    \end{lstlisting}
+    In this example the token parts are on different lines for readability but one can exactly see the header, payload and signature, all split by a dot ('.'). This is known as the compact serialisation form of the JWT.
+\end{itemize}
+\cite{rfc7519-jwt} \cite{jwt-handbook}
+
+The main use case of JWTs is authentication, more specifically stateless authentication.
+
+\section{Stateless Authentication}
+JWTs can be, and are most commonly used for authentication. Using \gls{jwt} authentication, servers can create a \gls{jwt} when the user logs in and return that token to the user. The user can then store the token on the client side (some complications may happen which will be discussed later on) and attach the \gls{jwt} as a header field in every request they send; this allows the server to verify the token and therefore approve or deny (in case validation fails) access to the user. Since \gls{jwt}s contain actual data, the payload can store the role of the user and the server can therefore check for authorisation privileges too. 
+
+This mechanism is advantageous because it allows for stateless authentication, this means that the server does not have to store the token or any other login data in a persistent storage, since the token is stored on the client side, they just have to validate it on each request.
+
+Although stateless authentication has its pros it also has its cons. First of all data on the client side is hard to keep safe, meaning that a number of different approaches exist to tamper with client side-saved tokens. \cite{jwt-handbook}
+
+\subsection{Cross-Site Request Forgery (CSRF)}
+Cross Site Request Forgery essentially means that if a user is logged in into a website (which usually means they have some authentication cookies stored in the browser) and visits a malicious site, then the malicious site can use the user’s cookies or local storage data to forge a request and make requests to the original website, authenticating as that user. The solution to this attack is splitting the token parts by saving the signature in the cookies and the header and payload in the client's local storage. \cite{jwt-handbook}
+
+\subsection{Cross Site Scripting (XSS)}
+Cross Site Scripting attacks consist of injecting malicious JavaScript into trusted sites. An example might be a website that takes unsanitised user input and stores it in storage, then later on renders it as HTML and therefore potentially renders a malicious \latexinline{<script>} tag, which could access tokens stored in cookies and in local storage. To mitigate this attack developers should always sanitise inputs and use the \latexinline{HTTPOnly} tag on the cookie containing the signature. This makes the cookie inaccessible to JavaScript. To mitigate both issues the use of HTTPS is strongly recommended. \cite{jwt-handbook}
+
+Both authentication and authorisation processes are closely tied to the safety of a web application, and JWTs help promote this safety. The next section will dive into why and how JWTs help improve the security of a web application.
+
+\section{Security}
+This next section will delve into how \gls{jwt}s provide security using digital signatures and how signatures are created.
+A digital signature is a piece of information that can be generated by encrypting a digest of the message with a private key. Afterwards, using the signature, the recipient can check the authenticity of the message with the public key, verifying that the message has not been altered since it was signed and that it was signed by the holder of the private key.
+This technology provides several key benefits:
+\begin{itemize}
+    \item \textbf{Authenticity}: digital signatures verify the source of the message, ensuring that it comes from the claimed sender;
+    \item \textbf{Integrity}: any alteration to the message after signing invalidates the signature, protecting against tampering;
+    \item \textbf{Non-repudiation}: the signer cannot deny the authenticity of the message they signed, as only their private key could have been used to generate the signature.
+\end{itemize}
+For \gls{jwt}s, digital signatures are defined by the \gls{jws} specification (RFC 7515) \cite{rfc7515-jws}, which specifies how to digitally sign or create message authentication codes (MACs) for JSON based data.
+Following is a list of tools necessary to understand how signing works.
+
+\subsection{Hashing}
+All signing algorithms depend on a hash that is performed on the data to be signed before it is encrypted. A hash is a function that converts a message into a fixed-size string of bytes. Rather than signing the data directly which could be of any size, the data gets hashed before, resulting in a string of fixed length that allows the signing algorithm to have a more uniform distribution of efficiency for any data being signed. Often data can be large which means that hashing it also reduces the complexity for the signing algorithm. The hashing process is also collision resistant, which means that it is computationally infeasible to find two different inputs that produce the same output. Therefore the hashed data is uniquely tied to the data it represents, and any minor change to the data would result in a change of hash, invalidating the signature. Furthermore, this property also ensures confidentiality, as the original data can not be retrieved from the hash in a reasonable amount of time. \cite{digsig-dummies}
+
+Different hashing algorithms exists, although the ones used in signing algorithms are all variations of the SHA (Secure Hash Algorithm) family: SHA256, SHA384 and SHA512. Following is an overview of how these work: 
+\begin{enumerate}
+    \item \textbf{preparation}: all algorithms start with padding the message so that its length becomes of a certain size, afterwards the message is divided into blocks of a certain length;
+    \item \textbf{initialisation}: then, a set of initial hash values is defined (\(H_0, H_1, ..., H_n\)) based on square roots of prime numbers. These initial values are the same for SHA256 and SHA512 but slightly different for SHA384;
+    \item \textbf{computation}: each of the padded blocks is processed in multiple rounds in which bitwise operations such as AND, OR, NOT and XOR and bit shifting are applied, also mixing in constants derived from the cube roots of primes. The output of each block becomes the input for the next round;
+    \item \textbf{end}: once computation is done, the blocks get concatenated and the hash value is ready.
+\end{enumerate}
+The algorithms work in basically the same way, although the results differ in size, meaning that a hash created using SHA256 will be 256 bits long, one created with SHA384 will be 384 bits and SHA512 will result in 512 bits. SHA384 is a truncated version of SHA512 and also differs from the other two in how initial values for the blocks are chosen, though the algorithm remains the same.
+\cite{sha-family}
+
+\subsection{Signing Algorithms}
+Two types of algorithms can be used to sign JWTs:
+\begin{itemize}[itemsep=-0.05em,topsep=2mm]
+    \item \textbf{Symmetric}: the same secret is used by both parties, to both sign and verify the signature;
+    \item \textbf{Asymmetric}: a pair of keys is used, one private and one public, the former for signing and the latter for verifying.
+\end{itemize}
+The latter should be preferred when the token issuer is not the same entity as the token consumer.
+
+Following is a list of most, though not all, of the signing algorithms defined by the \gls{jwa} (RFC 7518) \cite{rfc7518-jwa} specification and currently in use by JWTs. This is to give an overview to the reader about what algorithms are used in \gls{jwt}s and how signing and verifying works for each of them. Each algorithm has three different "versions" depending on which hashing algorithm (SHA256, SHA384 and SHA512) is used, though the signing algorithm itself is independent of the hashing algorithm, that is why it is abstracted away from the following explanations.
+
+\subsubsection{HMAC}
+HMAC or (Hash-based Message Authentication Code) is currently the only symmetric algorithm used to sign JWTs. The algorithm creates a \gls{mac} using a hash function and a secret key. A \gls{mac} is somewhat similar to a digital signature in the sense that it is a piece of information used to verify the authenticity a message. It is however similar in that does not use a public and private key but it relies on the two parties exchanging information to share the same secret key. The sender will generate a MAC, also known as tag, by combining the message with a secret key and then sends both the original message and the MAC tag to the receiver. The receiver then applies the algorithm again to the received message and obtains a new MAC, if that matches to the one they received, then the message is authentic, otherwise it has likely been tampered with.
+HMAC specifically works the following way:
+\begin{enumerate}
+    \item \textbf{preparation}: if the secret key is too short then it gets padded. Then the it gets hashed with a hashing algorithm such as SHA256, SHA384 or SHA512;
+    \item \textbf{process}: two constants, \latexinline{opad} (output padding) and \latexinline{ipad} (inner padding) are used. These get XORed with the secret key, resulting in two different keys. The message is then processed twice using the hash function, the first time with the \latexinline{ipad}-XORed key and the second time with the \latexinline{opad} one.
+    This results in the final HMAC value.
+\end{enumerate}
+\cite{rfc2104-hmac}
+Depending on the hashing algorithm used, the \gls{jws} specification defines three algorithms which use HMAC: HS256, HS384 and HS512. \cite{rfc7515-jws}
+
+\subsubsection{ECDSA}
+The Elliptic Curve Digital Signature Algorithm (ECDSA) is a variant of the Digital Signature Algorithm (DSA) that uses elliptic curve cryptography to provide a secure way of generating and verifying signatures. An elliptic curve is a smooth \gls{non-singular} curve defined over a field and following a mathematical equation. The equation has the following general form 
+\[y^2 = x^3 + ax + b\] 
+where $a$ and $b$ are coefficients which satisfy the $4a^3 + 27b^2 \neq 0$ equation to ensure the curve is \gls{non-singular}. 
+In cryptography, elliptic curves are defined over a finite field, allowing the creation of discrete logarithm problems that are currently computationally infeasible to solve. They can be defined in either one of these ways:
+\begin{itemize}
+    \item prime curves over a prime field $\mathbb{F}_n$ where the equation takes the form 
+    \[y^2 \equiv x^3 + ax + b \; mod \; p\]
+    where $p$ is a prime;
+    \item binary curves over a binary field $F_{2^n}$, with the equations modified to fit the structure of the field.
+\end{itemize}
+\cite{ecdsa}
+\paragraph{Key Generation} \mbox{}\\
+Following is the explanation on how keys for ECDSA are generated:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item \textbf{selection of the curve}: the curve $\mathbb{E}$ (on a finite field) has to be selected along with its parameters: $(p,a,b,G,n,h)$ where $p$ is the size of the field, $a$ and $b$ are defined above, $G$ is a base point on the curve, $n$ indicates the order of $G$ and $h$ is the co-factor;
+    \item \textbf{selection of the private key}: the private key $d$ is selected randomly in the range $[1, n - 1]$;
+    \item \textbf{calculation of the public key}: the public key $Q$ is calculated by simply multiplying $d$ and $G$.
+\end{enumerate}
+Finally the two points on the curve representing private and public key are ready for signing. \cite{ecdsa} \cite{rfc6979-ecdsa}
+
+\paragraph{Signing} \mbox{}\\
+The process of creating a digital signature with ECDSA involves the following steps:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item hash the original message $m$, getting $H(m)$;
+    \item choose a random nonce $k$ such that $1 \leq k < n$;
+    \item compute $R = kG = (x, y)$. If $x = 0$ then a new $k$ should be chosen;
+    \item compute $s = k^{-1}(H(m) + xd) \; mod \;n$. If $s = 0$ then a new $k$ should be chosen.
+\end{enumerate}
+The final signature for the document will be 
+\[(R, s).\]
+This can then be attached to the document and transmitted together. \cite{ecc}
+
+\paragraph{Verification} \mbox{}\\
+Following is the verification process for ECDSA keys:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item let $x$ be the x coordinate of $R$;
+    \item verify that $x$ and $s$ are in $[1, n-1]$, otherwise the signature is invalid;
+    \item hash the original message $m$, getting $H(m)$;
+    \item compute
+    \begin{itemize}[topsep=0pt]
+        \item $u_1 = s^{-1}H(m) \; mod \; n$
+        \item $u_2 = s^{-1}x \; mod \; n$
+    \end{itemize}
+    \item compute $V = u_1G + u_2Q$
+    \item declare the signature valid if and only if $V = R$. 
+\end{enumerate} 
+This process ensures that the signature was made by the private key holder and that the message was not altered since.\cite{ecc}
+
+The reason elliptic curves are so useful in cryptography is the Elliptic Curve Discrete Logarithm Problem (ECDLP). This problem is formulated in the following way: given two points $P$ and $Q$ on the curve, find the integer $d$ such that $Q$ = $dP$, if $d$ exists. This operation is easy to follow in the other direction: given $P$ and $d$, compute $Q$ (in fact, this really just returns the public key from the private one), but no polynomial-time algorithm has been found to solve the original question, making it computationally impossible (even with quantum computers) to retrieve the private key from the public one. \cite{ecdsa}
+
+Furthermore, there are three common versions of ECDSA recommended by \gls{nist} and used in JWTs which differ in what curve is used:
+\begin{itemize}
+    \item \textbf{ES256}: ECDSA version using the P-256 (secp256r1) curve. This curves operates on a prime field over a 256-bit prime number and provides a security level of 128 bits. This is widely used around SSL/TLS cryptography. This algorithm uses the SHA256 hashing algorithm;
+    \item \textbf{ES384}: ECDSA version using the P-384 (secp384r1) curve. This operates over a prime field with a 384-bit prime and provides a security level of 192 bits. This uses SHA384;
+    \item \textbf{ES521}: ECDSA version using the P-521 (secp521r1) curve. This provides a security level of 260 bits and should be used where maximum security is required and computational efficiency is secondary. This uses SHA512.
+\end{itemize} 
+\cite{ecdsa} \cite{rfc6979-ecdsa} \cite{rfc7515-jws}
+
+\note{Note on security levels}{
+The security level indicates how strong and resilient the algorithm is. A security level of $n$ bits means that the best theoretical attack would require $2^n$ operations to succeed.
+This is balanced out with computational efficiency, meaning that as the security level grows, the speed with which the signature is calculated drops.
+}
+
+\subsubsection{EdDSA}
+The Edwards-Curve Digital Signature Algorithm (EdDSA) is a variant of the Digital Signature Algorithm (DSA) that uses twisted Edwards curves. Just as ECDSA, the EdDSA algorithm also relies on the complexity of the ECDLP problem, although it has a performance advantage over ECDSA because of the use of twisted Edwards curves.
+A twisted Edwards curve is a curve defined over a (finite) field $K$ with a $d$ element such that $d \neq 0 \neq 1$ in $K$. The curve follows the given equation
+\[ax^2 + y^2 = 1 + dx^2y^2\]
+where $a$ and $d$ are constants in $K$ and $a$ is a non-square in $K$. In cryptography $K$ is usually chosen as a large prime field $\mathbb{F}_p$ or a binary field, just like in ECDSA. As can be seen in the equation, the twisted Edwards curve is really a specific type of elliptic curve, though a generalisation of Edwards curves, which are twisted Edwards curves with $a$ = 1. There is two specific curves used in cryptography, namely Ed25519 and Ed448, with Ed25519 being much more popular in terms of usage. This curve is based on a field $\mathbb{F}_p$ with $p = 2^{255}-19$. \cite{twisted-ec} The following paragraphs are going to focus on Ed25519 exclusively.
+
+\paragraph{Key Generation} \mbox{}\\
+Key generation is much simpler than with ECDSA. The private $a$ key is simply an integer selected at random from a defined range, while the public key $A$ is calculated as $A = aB$ where $B$ is the base point of the curve. \cite{practical-crypto}
+
+\paragraph{Signing} \mbox{}\\
+Given the message $m$ to be signed and the private key $a$, the signing process goes as follows:
+\begin{enumerate}
+    \setlength\itemsep{-0.1em}
+    \item compute $H =$ SHA512$(a)$ and split it into two 256 bit-parts: $H_0$ and $H_1$;
+    \item compute the nonce $r =$ SHA512$(h_0 \; || \; m)$;
+    \item calculate the point $R = rB$;
+    \item calculate $h =$ SHA512$(R_x \; || \; A \; || \; m) \; mod \; q$, where $q$ is the order of the base point $B$;
+    \item calculate $s = (r + hH_1) \; mod \; q$.
+\end{enumerate}
+The resulting signature will be 
+\[(R, s).\]
+In this algorithm, the nonce $r$ is calculated in a deterministic way rather than randomically as in ECDSA, this improves on ECDSA's possible poor random number generation vulnerability. Then the challenge $h$ is bound to the signature ensuring integrity. Finally, the signature is built using all components and making it hard to compute it without a private key.
+\cite{practical-crypto} \cite{rfc8032-eddsa}
+
+\paragraph{Verification} \mbox{}\\
+Given the message $m$, the public key $A$ and the signature $R$, the verification process goes as follows:
+\begin{enumerate} \setlength\itemsep{-0.1em}
+    \item calculate $h =$ SHA512$(R \; || \; A \; || \; m) \; mod \; q$
+    \item calculate $P_1 = sB$
+    \item calculate $P_2 = R + hA$
+    \item check if $P_1 = P_2$ and return the result.
+\end{enumerate}
+If the result is true, it means that $P_1$ and $P_2$ are the same EC point, but $P_1$ was calculated using the private key and $P_2$ using the corresponding public key, this means that the keys actually correspond.
+\cite{practical-crypto} \cite{rfc8032-eddsa}
+The \gls{jws} signing algorithm is EdDSA.
+
+\subsubsection{RSA}
+The last algorithm discussed in this thesis is \gls{rsa}. While probably the most known and common, this algorithm has been deemed insecure by \gls{nist} for a while and is not recommended to use anymore. There are two versions of RSA depending on what padding is used: \gls{pss} and PKCS\#1-v1.5. With the first one being the \textit{slightly} more secure one of the two, this is the only one that will be discussed here. \cite{rfc8017-rsa} RSA is based on the mathematical difficulty of factoring the product of two numbers.
+
+\paragraph{Key Generation}
+What follows is the process of generating an RSA key pair:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item choose $p$ and $q$ such that they are two sufficiently and distinct large prime numbers;
+    \item compute $n = pq$. This will become the modulus of the keypair and its length will indicate the key length;
+    \item compute $\phi(n) = (p-1)(q-1)$;
+    \item choose an integer $e$ such that $1 < e < \phi(n)$ and $e$ is coprime to $\phi(n)$. This will become the key's public exponent and is usually chosen as $65537$;
+    \item determine $d = e^{-1} \; mod \; \phi(n)$. This will be the private key exponent.
+\end{enumerate}
+The result will be the public key defined as 
+\[(n, e)\] 
+and the private key defined as
+\[(n, e, d).\]
+\cite{rfc8017-rsa} \cite{rsa} \cite{crypto-encyclo}
+
+\paragraph{Signing}
+Signing using RSA is quite straightforward:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item hash the message $m$ producing $H$;
+    \item a random \gls{salt} $s$ is added to the message and they both get padded using the PSS padding;
+    \item the private key is used to sign the padded message producing the signature.
+\end{enumerate}
+\cite{crypto-encyclo} 
+
+\paragraph{Verification}
+Finally, verification goes as follows:
+\begin{enumerate}[itemsep=-0.1em,topsep=2mm]
+    \item compute the encoded message with signature exponentiation: $S_e \; mod \; n$ using $e$ and $n$ which can be found in the public key;
+    \item extract the hash of the original message $H'$ and the salt $s'$;
+    \item hash the received message $M'$ to get $H$;
+    \item construct a verification block with $H$ and $s'$ with PSS padding, if this block matches the received block and $H = H'$ then the signature is valid.
+\end{enumerate}
+\cite{crypto-encyclo}
+The \gls{jws} signing algorithms using RSA are PS256, PS384 and PS512 for PSS padding, RS256, RS384 and RS512 for normal RSA PKCS\#1-v1.5. \cite{rfc7515-jws}
+
+\section{JWTs in Vapor}
+Support for \gls{jwt}s in Vapor is provided through the JWTKit package and the JWT wrapper package. JWTKit is the main library providing the API used for signing and verifying tokens while the JWT package provides first class integration to use JWTKit with Vapor. As explained in the authentication part of this chapter, the server creates a token after the user has logged in and returns it to the user, who then sends it to the server inside the header of every request. First of all a payload has to be created:
+\begin{minted}{swift}
+struct UserPayload: JWTPayload, Authenticatable, Content {
+    var email: String
+    var exp: ExpirationClaim
+}
+\end{minted}
+This payload contains the email of the user and an \latexinline{ExpirationClaim}, which is a claim type provided by JWTKit and contains the expiration of the token in \gls{unix-time}.
+\note{Note}{
+This code will not compile directly as a \lstinline{verify} method is required by the \lstinline{JWTPayload} protocol, though it is omitted as it is not relevant in this specific context.
+}
+The token can be used like this:
+\begin{minted}{swift}
+app.post("login") { req -> String in
+    let loginData = try req.content.decode(LoginData.self)
+    // Authenticate the user with the provided credentials...
+
+    let userPayload = UserPayload(
+        email: loginPayload.email, 
+        exp: ExpirationClaim(value: Date().addingTimeInterval(3600))
+    )
+    let token = try req.jwt.sign(userPayload)
+    return token
+}
+\end{minted}
+In this route the user is logged in (the login code is omitted and can be lifted from the second chapter of this thesis), afterwards the token is created with their data and is returned. Finally, the token can be used to protect routes:
+\begin{minted}{swift}
+let secure = app.grouped(
+    UserPayload.authenticator(), 
+    UserPayload.guardMiddleware()
+)
+
+secure.post("validateLoggedInUser") { req -> HTTPStatus in
+    let token = try req.auth.require(UserPayload.self)
+    return .ok
+}
+\end{minted}
+Here an authenticator is added to the \latexinline{"validateLoggedInUser"} route which checks for the presence of the token in the request header, in particular in the \lstinline{Authorization} field. Since the token is \lstinline{Authenticatable}, the authenticator is created automatically. Then, \lstinline{guardMiddleware()} is called, a middleware which returns an unauthorised error if authentication failed.
+\cite{vapor-docs}
+
+The next chapter will discuss how JWTKit works internally, with focus on its latest version rewrite, including the switch from BoringSSL to SwiftCrypto, new customisation features and more.

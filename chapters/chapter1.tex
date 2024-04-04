@@ -1,0 +1,337 @@
+\chapter{An introduction to Swift}
+In 2014, Apple made a groundbreaking announcement at their Worldwide Developer Conference (WWDC), introducing Swift, a new powerful and modern language initially designed to replace Objective-C on iOS, macOS, watchOS and tvOS. 
+Swift is a general purpose, statically typed and compiled programming language with modern, user friendly yet expressive and powerful syntax.
+Following are some of Swift's syntax's peculiarities, listed to introduce the reader to the language and to prepare them for other code examples later on, when these concepts are going to be taken for granted.
+
+% Type System
+
+\section{Type System}
+Swift is a statically typed language, which means that each variable and constant has an explicit type, whether declared by the programmer or inferred by the compiler. This strict typing helps prevent runtime errors such as type mismatches. Swift's type system also supports advanced features like generics which enable the creation of flexible and reusable functions and types while maintaining strong type safety. Additionally, Swift's protocols enable the creation of blueprints which any type can adopt, ensuring that the type conforms to the specified behaviours.
+
+\subsection{Type Safety}
+\textit{"Swift is a type-safe language."}\cite{swift-book} A language is type safe when the operations performed on data are only allowed if they are consistent with the data's type. In other words, a type safe language does not allow for type errors at runtime, as every type error is caught at compile time. While type checks are great to catch mismatched types, type safety can also lead to more verbose code as every variable and object have to have an explicitly defined type. In Swift this is solved by type inference, a technique compilers use to deduce the type of an expression by analysing the values provided to it.
+\begin{minted}{swift}
+    let publicExponent = 65537
+\end{minted}
+In this example the compiler can infer the \lstinline{Int} type of the constant without it having to be explicitly defined.
+Swift also allows for some extra formatting specifically for number literals which allow for better readability, for example different base integers, which can be represented like:
+\begin{minted}{swift}
+    let dec42 = 42
+    let bin42 = 0b101010 // binary representation of 42
+    let hex42 = 0x2A // hexadecimal representation of 42
+\end{minted}
+or big numbers which can contain underscores:
+\begin{minted}{swift}
+    let currentEpochTime = 1_707_928_991 // time in seconds from 1. Jan 1970
+\end{minted}
+\cite{swift-book}
+To handle null values, Swift uses \nameref{sec:optionals}.
+
+\subsection{Generics}
+Generics are the implementation of the so-called "parametric polymorphism". This programming technique allows developers to write reusable code which can work with any type subject to user-defined requirements. Generics solve the problem of having multiple implementations for a method which only differ by the type of the data they work on. Thanks to Swift's strict type system, the same code can be reused for different types:
+\begin{minted}{swift}
+    struct IntQueue {
+        private var elements: [Int] = []
+        
+        mutating func enqueue(_ element: Int) {
+            elements.append(element)
+        }
+        
+        mutating func dequeue() -> Int? {
+            guard !elements.isEmpty else { return nil }
+            return items.removeFirst()
+        }
+    }
+\end{minted}
+would have to be rewritten for each type which is not an \lstinline{Int} (\lstinline{Double}, \lstinline{Float} etc.). \\
+With generics the code can be rewritten to:
+\begin{minted}{swift}
+    struct Queue<Element> {
+        private var elements: [Element] = []
+        
+        mutating func enqueue(_ element: Element) {
+            elements.append(element)
+        }
+        
+        mutating func dequeue() -> Element? {
+            guard !elements.isEmpty else { return nil }
+            return elements.removeFirst()
+        }
+    }
+\end{minted}
+which enables the stack to be used with any type, e.g. \lstinline{Queue<String>} or \lstinline{Queue<Double>}.
+
+\subsection{Protocols}
+\textit{A protocol defines a blueprint of methods, properties, and other requirements that suit a particular task or piece of functionality. The protocol can then be adopted by a class, structure, or enumeration to provide an actual implementation of those requirements. Any type that satisfies the requirements of a protocol is said to conform to that protocol.} \cite{swift-book}
+A protocol can be defined as:
+\begin{minted}{swift}
+    protocol MyProtocol {}
+\end{minted}
+A class can then extend said protocol as follows:
+\begin{minted}{swift}
+    class MyClass: MyProtocol {}
+\end{minted}
+Protocols can define both methods and properties which the conforming class has then to implement:
+\begin{minted}{swift}
+    protocol Countable {
+        var count: Int { get set }
+    }
+    
+    struct Queue<Element>: Countable {
+        private var elements: [Int]
+
+        var count: Int {
+            elements.count
+        }
+
+        ...
+    }
+\end{minted}
+The earlier created \lstinline{Queue} class can even be extended using one of Swift's standard library protocols: \lstinline{Numeric}, which all basic number types conform to:
+\begin{minted}{swift}
+    struct NumericQueue<Element>: Countable where Element: Numeric {
+        ...
+    }
+\end{minted}
+This assures that the class can not be used with elements that are not numbers.
+
+\subsection{Type Erasure and Opaque Types}
+A common pattern to use the property defined in the \lstinline{Countable} protocol might be:
+\begin{minted}{swift}
+    func printCountOf<Collection>(collection: Collection) 
+        where Collection: Countable 
+    {
+        print("The count of your collection is \(collection.count)")
+    }
+\end{minted}
+While this works, this method looks more complex than needed, that's why Swift introduced the \lstinline{some} keyword to make this exact pattern easier to express:
+\begin{minted}{swift}
+    func printCountOf(collection: some Countable) {
+        print("The count of your collection is \(collection.count)")
+    }
+\end{minted}
+Here \lstinline{some Countable} indicates that the method expects a type which conforms to \lstinline{Countable}, without having to specify the specific type. This is called an \textbf{opaque} type.
+Finally, it might be quite intuitive to write something like:
+\begin{minted}{swift}
+    func printSumCountOfAll(collections: [some Countable]) {
+        var count = 0
+        for collection in collections {
+            count += collection.count
+        }
+        print("The sum of all collections count's is \(count)")
+    }
+\end{minted}
+This is not going to work, since the underlying type (which is the concrete type that gets passed to the method instead of \lstinline{some Countable}) is fixed, which means that all of the elements of the array must be of the same type. Although, the need is to have an array of arbitrary \lstinline{Countable} types, as the method doesn't care which type it is, just that it conforms to \lstinline{Countable}
+This is where another one of Swift's keywords comes in handy: \lstinline{any}. By using \lstinline{[any Countable]} the array represents any arbitrary type of \lstinline{Countable} and the underlying type can vary at runtime. This doesn't give the same compile time type-safety that \lstinline{some} has, though it allows to represent different types of \lstinline{Countable} at once, solving the problem at the top. This is called \textbf{type erasure}.
+
+% Memory Management
+
+\section{Memory Management}
+Memory management is a crucial aspect of programming languages which can lead to errors like memory leaks and buffer overflows if not handled correctly. Swift incorporates a number of mechanisms to avoid these types of errors.
+
+\subsection{Automatic Reference Counting (ARC)}
+Swift uses Automatic Reference Counting (ARC) to track and manage the app’s memory usage. In most cases, this means that memory management “just works” in Swift, and developers don’t need to think about memory management themselves. ARC automatically frees up the memory used by class instances when those instances are no longer needed.\cite{swift-docs}
+ARC is a memory management feature which relies on reference counting. This system keeps track of all memory allocations that happen during runtime and automatically deallocates the memory of elements no longer needed, eliminating the programmer's burden to manually handle memory allocation and deallocation.
+
+% We could speak about retain cycles here %
+
+\subsection{Copy-on-Write Semantics (CoW)}
+For some of its value types such as \lstinline{Array}, \lstinline{String} and \lstinline{Dictionary} Swift implements Copy-on-Write semantics, a memory management technique which allows efficient management of mutable data structures. CoW is particularly useful in managing collections such as arrays, sets or strings. The goal is to minimise unnecessary copying of objects between different callers and, as the name suggests, this is done by copying the object in a new, private copy visible to the caller \textit{only} when the object is written-on. If the passed object is never modified by the caller, no copy gets created and the caller gets to keep a reference to the original object without having to allocate new, useless, memory for data they already have. \cite{protocol-oriented}
+
+\subsection{Optionals}
+\label{sec:optionals}
+In many languages such as C or C++ null references can lead to runtime errors such as null pointer dereferences, which can cause crashes or undefined behavior.
+The compiler prevents access to uninitialised or deallocated memory by implementing optionals. Optionals are designed to handle the absence of a value: formally, for a non optional type \lstinline{T}, \lstinline{T?} is the corresponding optional type representing either a value of type \lstinline{T} or the absence of a value (\swiftinline{nil}). Following is an example of an optional:
+\begin{minted}{swift}
+    var optionalString: String? = "Hello"
+    optionalString = nil // This is allowed and safe
+\end{minted}
+Optionals are implemented as an enum with two cases: \swiftinline{none} and \lstinline{some(Wrapped)}, which represents a wrapped value of type \lstinline{T}.
+To use the wrapped value, the optional must be unwrapped first. This can be done in different ways:
+\begin{itemize}
+    \item \textbf{Optional Binding}:
+    \begin{minted}{swift}
+        if let unwrappedValue = optionalValue {
+            // Use unwrappedValue safely within this block
+        } else {
+            // optionalValue is nil
+        }
+    \end{minted}
+    This technique allows to conditionally unwrap an optional and bind its value to a new constant or variable within a conditional statement. Depending on if the optional contains a value or not, either the first block or the second will be executed.
+    \item \textbf{Nil Coalescing}
+    \begin{minted}{swift}
+        let unwrappedValue = optionalValue ?? defaultValue
+    \end{minted}
+    This method provides a default value to fallback to if the optional doesn't contain a value.
+    \item \textbf{Guard Statement}
+    \begin{minted}{swift}
+        guard let unwrappedValue = optionalValue else {
+            // Handle the case where optionalValue is nil
+            return
+        }
+        // Use unwrappedValue safely beyond this point
+    \end{minted}
+    This statement is similar to Optional Binding but instead of continuing in the \swiftinline{if} block, it exits early (in fact, inside of a \swiftinline{guard} statement, there must be either a \swiftinline{return} or a \swiftinline{throw} expression) if the value is \swiftinline{nil} and continues on outside otherwise.
+    \item \textbf{Force Unwrapping}
+    \begin{minted}{swift}
+        let unwrappedValue = optionalValue!
+    \end{minted}
+    This forcefully unwraps the optional bypassing Swift's safety checks and crashes the runtime if the optional is \swiftinline{nil}. Using force unwrapping is a bad practice and developers should choose other strategies unless they are sure the optional is never going to be empty.
+\end{itemize}
+
+\section{Swift's Concurrency Model}
+Usually, when a method gets called, the thread on which the method is executed gets blocked until the end of the methods' execution. That is why, in modern languages and especially in server-side oriented ones, the ability to execute more than one task at a time is fundamental. 
+This programming technique is called \textbf{concurrency}, and aims to increase responsiveness, scalability and resource utilisation of programs by splitting up the work and executing more than one operation at a time. With the release of version 5.5, Swift introduced new patterns to enable developers to write safer, simpler and more efficient concurrent code.
+
+\subsection{Asynchronous Programming}
+\label{sec:async-await}
+While not \textit{enabling} concurrency per se, one of the most notable new features is async/await. This pattern is quite common in other languages like JavaScript, Python and C\# and allows writing asynchronous code using normal, synchronous-looking constructs. With async/await functions can be marked as \lstinline{async}, which means that the method can suspend its execution awaiting the completion of another subroutine without blocking the thread it is running on. Inside of the method, the \lstinline{await} keyword is used to execute the function that is going to pause current \lstinline{async} function.
+For example, this completion-based code block: 
+\begin{minted}{swift}
+    func fetchData(completion: @escaping (Result<Data, Error>) -> Void) {
+        let task = URLSession.shared.dataTask(with: url) { data, _, error in
+            completion(data.map(Result.success) ?? .failure(error ?? NetworkError.unknown))
+        }
+        task.resume()
+    }
+
+    func getData() {
+        return fetchData { result in
+            switch result {
+            case .success(let data):
+                processData(data) { processedResult in
+                    // Handle processedResult
+                }
+            case .failure(let error):
+                // Handle error
+            }
+        }
+    }
+\end{minted}
+can be rewritten with async/await as:
+\begin{minted}{swift}
+    func fetchData() async throws -> Data {
+        let (data, _) = try await URLSession.shared.data(for: url)
+        return data
+    }
+    
+    func getData() async throws {
+        do {
+            let data = try await fetchData()
+            let processedData = try await processData(data)
+            // Handle processedData
+        } catch {
+            // Handle error
+        }
+    }
+\end{minted}
+Using completions works, though it can get messy quite fast.
+Using async/await avoids the use of the so called "callback-hell", when a pyramid of callbacks is created by nesting callbacks in each call, making the code much clearer and easier to debug. 
+Another advantage is getting rid of the \lstinline{Result<Data, Error>} type and being able to throw errors normally like in any other synchronous code block. \cite{async-await-proposal}
+
+\subsection{Structured Concurrency}
+While async/await introduced a simpler way to write asynchronous code, the \lstinline{getData()} method is not yet \textit{concurrent}: it is asynchronous, though it is still sequential, meaning that \lstinline{fetchData()} and \lstinline{processData()} are still going to get executed one after the other. To be concurrent, the tasks need to be able to be executed at the same time: this is the reason Swift introduced Structured Concurrency. \\
+Put simply, running code concurrently means splitting up the workload of a function on a number of threads rather than using just one, and executing those threads at the same time, gaining a significant time advantage: this is called "unstructured concurrency". Unstructured concurrency \textit{works}, the problem is that various issues can arise from threads being spawned independently, such as \gls{race-condition}s and \gls{deadlock}s. 
+With the "structured" adjective, concurrency becomes not only about randomly splitting up work, but doing so in a structural, hierarchical manner. In particular, the work is split up into \textbf{tasks}. \textit{A task is the basic unit of concurrency in the system}\cite{structured-concurrency-proposal}, and each time a task is created, it becomes a child of the task where it was spawned. This way, tasks inherit their parents' lifecycle and are not left dangling. This also means that when a parent task gets cancelled, the cancellation gets propagated to its children. Errors on the other hand get propagated up to their parent task, centralising and simplifying error handling. Furthermore, since tasks are managed hierarchically, data sharing between tasks gets much easier. \cite{structured-concurrency-proposal}
+Using the same example as earlier but supposing that multiple calls have to be made concurrently to different URLs, in Swift this can be done as:
+\begin{minted}{swift}
+    func getData(from urls: [URL]) async throws {
+        // Create a task group for concurrent data fetching
+        let fetchedData = try await withThrowingTaskGroup(of: Data.self) { group -> [Data] in
+            var results = [Data]()
+
+            // Add a fetching task for each URL
+            for url in urls {
+                group.addTask {
+                    try await fetchData(from: url)
+                }
+            }
+
+            // Collect results
+            for try await data in group {
+                results.append(data)
+            }
+
+            return results
+        }
+
+        // Process all fetched data
+        for data in fetchedData {
+            let processedData = try await processData(data)
+            // Handle processedData
+        }
+    }
+\end{minted}
+In this example, a task group is created, and, for each URL, a task is added to the task group to fetch data from that URL. Then, in the for loop, each task is executed and the result of each API call is added to the \lstinline{results} array, finally to be processed by the \lstinline{processData(_:)} function.
+
+\subsection{Actors}
+While Structured Concurrency is great for ensuring safety against \gls{data-race}s between concurrently executing code, that paradigm doesn't allow for safely sharing mutable state, using, for example, a class. Classes are reference types which means they \textit{can} be used to share state between different tasks, the problem is that they require code-explicit-synchronisation to be used safely across concurrent domains, and even then safety is not guaranteed.
+This is why Swift 5.5 also introduced actors. Actors, just like classes, are reference types, though they differ in how tasks can access their data: access to an actor's properties is \textbf{asynchronous}. This means that actors only allow one task to modify their state at a time (in fact, any operation performed on an actor is done via the async/await syntax), while other tasks have to wait for the task before to finish. This ensures (at compile time) that there can not be any \gls{race-condition}s on the actor's state.
+Actors also encapsulate their state to be private, only allowing operations they decide (for example, via getters and setters), denying direct access to external parts of the program. \cite{swift-book}
+The following example demonstrates how an actor dramatically simplifies a class that was made data-race safe using a \lstinline{DispatchQueue}:
+\begin{minted}{swift}
+    class Counter {
+        private var value = 0
+        private let queue = DispatchQueue(label: "com.example.counterQueue")
+    
+        func increment(completion: @escaping () -> Void) {
+            queue.async {
+                self.value += 1
+                completion()
+            }
+        }
+    
+        func getValue(completion: @escaping (Int) -> Void) {
+            queue.async {
+                completion(self.value)
+            }
+        }    
+    }
+
+    let counter = Counter()
+
+    counter.increment {
+        counter.getValue { currentValue in
+            print("Current Value: \(currentValue)")
+        }
+    }
+\end{minted}
+Using actors, this gets to become:
+\begin{minted}{swift}
+    actor Counter {
+        private var value = 0
+    
+        func increment() {
+            value += 1
+        }
+    
+        func getValue() -> Int {
+            return value
+        }
+    }
+
+    let counter = Counter()
+
+    await counter.increment()
+    let currentValue = await counter.getValue()
+    print("Current Value: \(currentValue)")
+\end{minted}
+
+\subsection{Sendable Types}
+The last concurrency related idiom introduced by Swift 5.5 discussed in this thesis is \lstinline{Sendable}.
+\lstinline{Sendable} is a \gls{marker-protocol} that indicates that the conforming type is safe to be sent across actor boundaries or to be used in concurrency. 
+While actors and tasks create safe \gls{concurrency-domain}s, a mechanism is required to safely pass data \textit{across} said domains: by marking a type as \lstinline{Sendable}, the compiler automatically knows that that type should be safe, and is going to warn (error in future Swift releases) if it is not. Additionally, thanks to structured concurrency and actors, the compiler is going to notice and warn when non-\lstinline{Sendable} types are passed across different concurrency-domains. This helps catch \gls{race-condition}s at compile time. As of Swift 5.5, some types are even \lstinline{Sendable} by default, such as structures (which are copy-value types) with only \lstinline{Sendable} properties and enumerations with only \lstinline{Sendable} associated values. \cite{swift-book}
+\begin{minted}{swift}
+    actor SomeActor {
+        func doThing(string: SomeNonSendableType) async {...}
+    }
+    
+    func useActor(someActor: SomeActor, myString: SomeNonSendableType) async {
+        await someActor.doThing(string: myString)
+    }
+\end{minted}
+Actors are always implicitly \lstinline{Sendable} since they handle their own mutable state, that's why the first method can be declared. The problem here is with the second method, as that is going to throw a warning:
+\begin{lstlisting}
+    Passing argument of non-sendable type 'SomeNonSendableType' into actor-isolated context may introduce data races
+\end{lstlisting}
+This example shows how the compiler behaves when a non-\lstinline{Sendable} type is used concurrently. While it's just a warning, this code could introduce \gls{data-race}s, that's why the warning will become an error in future Swift releases. \cite{sendable-proposal}

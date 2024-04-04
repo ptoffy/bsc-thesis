@@ -1,0 +1,715 @@
+\chapter{JWTKit v5}
+This chapter will speak about the rewrite of JWTKit which lead to its major version number 5. During the rewrite, the package underwent a major overhaul which updated internals to switch from the underlying BoringSSL library to use SwiftCrypto, the native Swift library created by Apple providing cryptographic operations. Additionally, the public API also got an update, with the addition of the RSA-PSS algorithm, custom header and custom serialising and parsing and more. In this chapter the differences and improvements between version 4 and version 5 will be discussed, starting with the package structure and the public API changes.
+
+\section{Package Structure and Public API}
+First of all, this section will take a look at how the project structure changed from version 4 to version 5; this will be useful to understand the next sections of this chapter too. 
+
+\subsection{Version 4}
+While an anticipation was given in section 3.4, the type used to represent \gls{jwt}s is the \lstinline{JWTPayload}: this protocol represents the payload of the token. Users can create types conforming to this protocol and can add the custom claims they desire, also specifying a custom \lstinline{verify} method. For example:
+\begin{minted}{swift}
+struct UserPayload: JWTPayload {
+    var email: String
+    var exp: ExpirationClaim
+
+    func verify(using signer: JWTSigner) throws {
+        try self.exp.verifyNotExpired()
+    }
+}
+\end{minted}
+This token is similar to the one in section 3.4, but with the addition of the \lstinline{verify} method which is required.
+The payload can both get signed, returning the compact serialisation format of the token as a \lstinline{String}, and be used to verify other string tokens. Signing and verification happens through a \lstinline{JWTSigners} type, which is basically a collection of \lstinline{JWTSigner} instances. Each one of them is identified by a \lstinline{kid} and represents a, usually different from the others, signing algorithm.
+Keys can be created and then added to the signers collection:
+\begin{minted}{swift}
+let ecdsaPublicKeyPEM = """
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2adMrdG7aUfZH57aeKFFM01dPnkx
+C18ScRb4Z6poMBgJtYlVtd9ly63URv57ZW0Ncs1LiZB7WATb3svu+1c7HQ==
+-----END PUBLIC KEY-----
+"""
+// Initialise an ECDSA key with public PEM
+let key = ECDSAKey.public(pem: ecdsaPublicKeyPEM)
+// Create signers
+let signers = JWTSigners()
+// Add the key to the signers
+try signers.use(.es256(key: key), kid: "some-kid")
+\end{minted}
+This snippet creates a public ECDSA key from a \gls{pem} file and adds it to a new signer collection, adding the "some-kid" identifier to it so the correct signer can be chosen between the other ones. This can then be used to sign a payload:
+\begin{minted}{swift}
+let payload = UserPayload(
+    email: "some-email", 
+    exp: .init(value: .distantFuture)
+)
+let token = try signers.sign(payload, kid: "some-kid")
+\end{minted}
+The \lstinline{token} constant will then contain the compact serialisation form of the token and can be verified using the same signers:
+\begin{minted}{swift}
+    let payload = try signers.verify(
+        token, 
+        as: UserPayload.self, 
+        kid: "some-kid"
+    )
+\end{minted}
+If verification succeeds, the \lstinline{payload} constant will contain the original payload.\cite{jwtkit-4}
+
+\subsection{Version 5}
+In version 5, the payload API remains the same, besides the changes to the \lstinline{verify} method:
+\begin{minted}{swift}
+func verify(using key: JWTAlgorithm) async throws {
+    try self.exp.verifyNotExpired()
+}
+\end{minted}
+Since \lstinline{JWTSigner} became internal, \lstinline{JWTAlgorithm} can be used instead. This protocol represents a signing algorithm. The main change in the new API is the replacement of the \lstinline{JWTSigners} class with an \latexinline{actor} named \lstinline{JWTKeyCollection}. They work in a similar way, both encapsulating a collection of signing algorithms, though the main difference, since the new structure is an \latexinline{actor}, is that it is inherently thread safe, as explained in the first chapter of this thesis. This is how a key collection is created:
+\begin{minted}{swift}
+// Create a key using the same PEM string as above
+let key = ES256PublicKey(pem: ecdsaPublicKeyPEM)
+
+// Create a key collection and add the key to it
+let keys = JWTKeyCollection()
+try await keys.addES256(key: key, kid: "some-kid")
+\end{minted}
+Afterwards, the key collection can be used both to sign:
+\begin{minted}{swift}
+    let token = try await keys.sign(payload, header: ["kid": "private"])
+\end{minted}
+and verify:
+\begin{minted}{swift}
+    let payload = try await keys.verify(token, as: UserPayload.self)
+\end{minted}
+The main differences here are that, since the key collection has become an \latexinline{actor}, the methods on it are all \latexinline{async} and must therefore be awaited \latexinline{await}; also, the header does not receive the token's header parameters as function parameters, but it takes a \swiftinline{JWTHeader}, this is dictionary containing header fields to be added to the token, including the possibility to add custom ones which will be discussed later on. \\
+Each signer is now a key and has therefore a different API, for example, other than the ES256 algorithm shown above:
+\begin{minted}{diff}
+- EdDSAKey.PublicKey(x: eddsaPublicKeyBase64, curve: .ed25519)
++ EdDSA.PublicKey(x: eddsaPublicKeyBase64, curve: .ed25519)
+
+- RSAKey.private(pem: pem)
++ Insecure.RSA.PrivateKey(pem: pem)
+\end{minted}
+
+Since \latexinline{RSA} is not recommended besides out of compatibility reasons, the key is now gated behind an \latexinline{Insecure} namespace. \cite{jwtkit}
+
+While the public API changes are not huge, they were certainly necessary due to the restructuring of the internals, which will be discussed next.
+
+\section{BoringSSL vs SwiftCrypto}
+Internally, the most important change which version 5 brings is the eradication of BoringSSL, which got replaced by SwiftCrypto. This section will speak about the two different libraries and how the transition to SwiftCrypto makes JWTKit’s maintenance much easier.
+
+\subsection{BoringSSL}
+Until version 4, JWTKit was really a wrapper around a vendored version of BoringSSL. BoringSSL is Google's fork on OpenSSL, a low level C library providing cryptographic operations. As stated on their Git repository, BoringSSL was built to comply with Google's needs, which OpenSSL didn't completely satisfy. Once the differences started becoming big, Google decided to open source the project and provide users with vendored copies of the library, although not providing API stability and thus allowing breaking changes. \cite{boringssl}
+Thanks to Swift's interoperability with C, functions from BoringSSL can be easily called from Swift code using unsafe constructs with direct access to memory such as \lstinline{OpaquePointer}s, \lstinline{UnsafePointer}s and \lstinline{UnsafeMutablePointer}s. Having to use unsafe, not type checked and not memory safe constructs in a modern language such as Swift is not ideal, that's why a different approach was chosen.
+
+\subsection{SwiftCrypto}
+SwiftCrypto is Apple's first open source cryptographic library. Apple has had its CryptoKit library for a long time, providing native cryptographic operations to its platforms (iOS, macOS etc.). This library is closed source, which means that its code is not public and it is only maintained by Apple itself. In 2020, Apple released SwiftCrypto, an open source library providing cryptographic operations to both Apple platform and Linux: this was a giant step for server side Swift. The library closely follows the CryptoKit API and, on Apple platforms, actually uses the CryptoKit code directly. On Linux, on the other hand, it uses BoringSSL, the library mentioned above which JWTKit managed to get away from. While this may seem just a distancing rather than a proper farewell to BoringSSL, being able to abstract away low-level C calls from a modern Swift library is a big advancement.
+
+\subsubsection{CryptoExtras}
+SwiftCrypto has been built with the idea of creating an easy to use cryptographic library, this means that it had to strip away complexities from normal crypto libraries such as BoringSSL, and these complexities also include some old and/or unused algorithms, as having too many algorithms for hashing, encrypting or signing may be a source of confusion for some users. One of these algorithms is RSA. RSA is not included in CryptoKit because of security and efficiency reasons, therefore it is not in SwiftCrypto either. This is the reason the \lstinline{_CryptoExtras} module was created, basically an extension of the package which is not directly part of the main SwiftCrypto API, but provides support for less safe and modern algorithms and operations, mainly for compatibility reasons. Since often JWTs require RSA and PSS, support was needed for those and the \lstinline{_CryptoExtras} package was used. Unfortunately one specific API was missing, which creates RSA keys based on modulus, public exponent and private exponent, that's why this API was directly implemented in JWTKit, though more on this will be discussed later on.
+
+Following are some practical code examples on how the code changed with the transition.
+
+\subsection{Key Creation}
+\paragraph{Version 4} \mbox{} \\
+Before the key code itself, a method must be introduced that takes a \gls{pem} formatted key and processes it using a passed in closure:
+\begin{minted}{swift}
+static func load<Data, T>(
+    pem data: Data, 
+    _ closure: (UnsafeMutablePointer<BIO>) -> (T?)
+) throws -> T
+    where Data: DataProtocol
+{
+    // Convert the input Data to a byte array for C API compatibility
+    let bytes = data.copyBytes()
+
+    // Create a new BIO memory buffer with the PEM data.
+    // BIO is a fundamental I/O abstraction in OpenSSL/BoringSSL.
+    // `CJWTKitBoringSSL_BIO_new_mem_buf` creates a BIO 
+    // that operates in memory with the given data
+    let bio = CJWTKitBoringSSL_BIO_new_mem_buf(
+        bytes, 
+        numericCast(bytes.count)
+    )
+
+    // Ensure that the BIO is freed after use to prevent memory leaks.
+    defer { CJWTKitBoringSSL_BIO_free(bio) }
+    
+    // Ensure the BIO was successfully created and that the closure doesn't 
+    // return nil. If either fails, throw an error indicating the failure.
+    guard let bioPtr = bio, let c = closure(bioPtr) else {
+        throw JWTError.signingAlgorithmFailure(
+            OpenSSLError.bioConversionFailure
+        )
+    }
+
+    // Return the result of the closure if everything succeeds
+    return c
+}
+\end{minted}
+Every BoringSSL function called has a \lstinline{CJWTKitBoringSSL_} prefix, as that is what the vendored library is called.
+Then, following is the code to actually create a public key from a \gls{pem} file:
+\begin{minted}{swift}
+public static func `public`<Data>(pem data: Data) throws -> ECDSAKey
+    where Data: DataProtocol
+{
+    // Calls the 'load' method defined previously, 
+    // passing the PEM data and a closure.
+    let c: OpaquePointer = try self.load(pem: data) { bio in
+        // Attempts to read an EC public key from the BIO memory buffer.
+        // The 'nil' arguments are placeholders for callback functions
+        // and user data, which are not needed for this operation.
+        CJWTKitBoringSSL_PEM_read_bio_EC_PUBKEY(bio, nil, nil, nil)
+    }
+    return self.init(c)
+}
+\end{minted}
+Afterwards, the \lstinline{c} constant will contain an \lstinline{OpaquePointer} with the initialised public key. JWTKit used to simply keep an \lstinline{OpaquePointer} reference to pass around to the various C functions that needed it. \\
+Finally, an interesting method in BoringSSL is the creation of an EC curve using its coordinates, which in JWTKit v4 was done as follows:
+\begin{minted}{swift}
+public convenience init(
+    parameters: Parameters, // public key coordinates (x, y)
+    curve: Curve = .p521,
+    privateKey: String? = nil
+) throws {
+    // Create a new EC key object based on the specified curve
+    let c = CJWTKitBoringSSL_EC_KEY_new_by_curve_name(curve.cName) 
+
+    // Convert the base64URL encoded 'x' and 'y' coordinates to a BigNumber
+    let bnX = BigNumber(base64URL: parameters.x)
+    let bnY = BigNumber(base64URL: parameters.y)
+
+    // Set the public key coordinates for the EC key
+    CJWTKitBoringSSL_EC_KEY_set_public_key_affine_coordinates(
+        c, 
+        bnX.c, 
+        bnY.c
+    )
+
+    // If a private key is provided, attempt to set it for the EC key.
+    if let privateKey = privateKey {
+        let bnPrivate = BigNumber(base64URL: privateKey)
+        CJWTKitBoringSSL_EC_KEY_set_private_key(c, bnPrivate.c)
+    }
+
+    // Initialise the EC key object with the created EC key.
+    self.init(c)
+}
+\end{minted}
+Disclaimer: this snippet was greatly simplified from the original for demonstration purposes: all the C functions return optionals and each C call is wrapped around a guard statement which throws an error if the function fails. \\
+The example shows how an \lstinline{OpaquePointer} containing a key can be initialised using the keys coordinates and an optional private key. \cite{jwtkit-4}
+
+\paragraph{Version 5} \mbox{} \\
+For dealing with EC keys, SwiftCrypto provides namespaces for the most common ones, namely \lstinline{P256}, \lstinline{P384} and \lstinline{P521}. Unfortunately these do not share a common protocol as JWTKit would need, that's why a custom one had to be build in JWTKit directly:
+\begin{minted}{swift}
+public protocol ECDSACurveType: Sendable {
+    associatedtype Signature: ECDSASignature
+    associatedtype PrivateKey: ECDSAPrivateKey
+    static var curve: ECDSACurve { get }
+    static var byteRanges: (x: Range<Int>, y: Range<Int>) { get }
+}
+\end{minted}
+Each of SwiftCrypto's curves then conforms to that:
+\begin{minted}{swift}
+extension P256: ECDSACurveType, @unchecked Sendable {
+    public typealias Signature = P256.Signing.ECDSASignature
+    public typealias PrivateKey = P256.Signing.PrivateKey
+
+    public static let curve: ECDSACurve = .p256
+
+    /// Specifies the byte ranges in which the X and Y coordinates 
+    /// of an ECDSA public key appear for the P256 curve
+    public static let byteRanges: (x: Range<Int>, y: Range<Int>) = 
+        (1 ..< 33, 33 ..< 65)
+}
+\end{minted}
+The curve type is then used in the \lstinline{ECDSAKey} protocol:
+\begin{minted}{swift}
+public protocol ECDSAKey: Sendable {
+    associatedtype Curve: ECDSACurveType
+}
+\end{minted}
+This then allows to create a namespace for ECDSA:
+\begin{minted}{swift}
+    public enum ECDSA: Sendable {}
+\end{minted}
+which will contain two structures, one for the public key and one for the private one, each one equipped with a generic curve.
+Finally, keys can be created like:
+\begin{minted}{swift}
+public init(pem string: String) throws {
+    backing = try PublicKey(pemRepresentation: string)
+}
+\end{minted}
+which is possible thanks to the \lstinline{PublicKey} and \lstinline{PrivateKey} associated types both having an \latexinline{init(pemRepresentation:)} initialiser. In comparison to C code, the only complication here is the abstraction of code using protocols to create a clean API, but if it were just about creating a P256 public key from a PEM encoded String, in SwiftCrypto it is a one-liner:
+\begin{minted}{swift}
+    let privateKey = try P256.Signing.PublicKey(pemRepresentation: string)
+\end{minted}
+which, compared to the BoringSSL code from earlier, is quite neat.
+The last method of the previous paragraph is also much simpler using SwiftCrypto:
+\begin{minted}{swift}
+public init(parameters: ECDSAParameters) throws {
+    guard
+        let x = parameters.x.base64URLDecodedData(),
+        let y = parameters.y.base64URLDecodedData()
+    else {
+        throw JWTError.generic(
+            identifier: "ecCoordinates", 
+            reason: "Unable to interpret x or y as base64 encoded data"
+        )
+    }
+    backing = try PublicKey(x963Representation: [0x04] + x + y)
+}
+\end{minted}
+This creates a new ECDSA key using the x and y coordinates. \cite{jwtkit}
+
+\subsubsection{Signing}
+\paragraph{Version 4} \mbox{} \\
+To use the stored \lstinline{OpaquePointer} for signing, JWTKit 4 used this method:
+\begin{minted}{swift}
+func sign<Plaintext>(_ plaintext: Plaintext) throws -> [UInt8]
+    where Plaintext: DataProtocol
+{
+    // Compute the digest (hash) of the plaintext
+    let digest = try self.digest(plaintext)
+
+    // Sign the digest using ECDSA. 
+    // This function requires the digest, its length, and the EC key
+    let signature = CJWTKitBoringSSL_ECDSA_do_sign(
+        digest,
+        numericCast(digest.count),
+        self.key.c
+    )
+    
+    // Free the signature structure to prevent memory leaks
+    defer { CJWTKitBoringSSL_ECDSA_SIG_free(signature) }
+
+    // Extract the r and s values from the signature
+    let r = CJWTKitBoringSSL_ECDSA_SIG_get0_r(signature)
+    let s = CJWTKitBoringSSL_ECDSA_SIG_get0_s(signature)
+    // Determine the size of the result based on the signing curve
+    // This affects how many bytes are needed for r and s
+    let rsSize = self.curveResultSize
+
+    // Prepare byte arrays to hold the binary representation of r and s, 
+    // initialised with zeros
+    var rBytes = [UInt8](repeating: 0, count: rsSize)
+    var sBytes = [UInt8](repeating: 0, count: rsSize)
+
+    // Convert r and s from BIGNUM to binary form 
+    // and store them in the prepared byte arrays
+    let rCount = Int(CJWTKitBoringSSL_BN_bn2bin(r, &rBytes))
+    let sCount = Int(CJWTKitBoringSSL_BN_bn2bin(s, &sBytes))
+
+    // Assemble the signature by concatenating r and s, 
+    // ensuring each is zero-prefixed to the required length if necessary.
+    // This step handles potential issues with byte representation 
+    // in ECDSA signatures, ensuring the signature format 
+    // conforms to expectations (e.g., as per RFC 7515)
+    return rBytes.prefix(rCount).zeroPrefixed(upTo: rsSize)
+        + sBytes.prefix(sCount).zeroPrefixed(upTo: rsSize)
+}
+\end{minted}
+This creates the signature of the plaintext which can then be attached to the token. \cite{jwtkit-4}
+
+\paragraph{Version 5} \mbox{} \\
+The same code in JWTKit 5 is the following:
+\begin{minted}{swift}
+func sign(_ plaintext: some DataProtocol) throws -> [UInt8] {
+    // Compute the digest (hash) of the plaintext
+    let digest = try self.digest(plaintext)
+
+    // Check if the key is a private key, throw otherwise
+    guard let privateKey else {
+        throw JWTError.signingAlgorithmFailure(ECDSAError.noPrivateKey)
+    }
+
+    // Calculate the signature
+    let signature = try privateKey.backing.signature(for: digest)
+
+    // Convert it to [UInt8]
+    return [UInt8](signature.rawRepresentation)
+}
+\end{minted}
+The code is quite a bit shorter, easier to understand and uses a more modern syntax. The \latexinline{some} keyword is also in action here, representing a \latexinline{DataProtocol}-conforming opaque type. It's worth noting how few comments are in the second version compared to the first one: this is an indicator of how clear the code itself is. \cite{jwtkit}
+
+\subsubsection{Verification}
+\paragraph{Version 4} \mbox{} \\
+Finally, using BoringSSL, ECDSA verification is done as follows:
+\begin{minted}{swift}
+func verify<Signature, Plaintext>(
+    _ signature: Signature, // The signature to be verified
+    signs plaintext: Plaintext // The data that was supposedly signed
+) throws -> Bool
+    where Signature: DataProtocol, Plaintext: DataProtocol
+{
+    // Compute the digest (hash) of the plaintext
+    let digest = try self.digest(plaintext)
+
+    let signatureBytes = signature.copyBytes()
+    // Determine the size of r and s based on the elliptic curve used
+    let rsSize = self.curveResultSize 
+    // If the signature size doesn't match the expected, return false
+    guard signatureBytes.count == rsSize * 2 else {
+        return false
+    }
+
+    // Create a new ECDSA signature object
+    let signature = CJWTKitBoringSSL_ECDSA_SIG_new()
+    defer { CJWTKitBoringSSL_ECDSA_SIG_free(signature) }
+
+    // Split the signature bytes into r and s components 
+    // and set them on the ECDSA signature object
+    try signatureBytes.prefix(rsSize).withUnsafeBufferPointer { r in
+        try signatureBytes.suffix(rsSize).withUnsafeBufferPointer { s in
+            // Convert the byte buffers for r and s into BIGNUMs 
+            // and set them on the signature object
+            CJWTKitBoringSSL_ECDSA_SIG_set0(
+                signature,
+                CJWTKitBoringSSL_BN_bin2bn(r.baseAddress, rsSize, nil),
+                CJWTKitBoringSSL_BN_bin2bn(s.baseAddress, rsSize, nil)
+            )
+        }
+    }
+
+    // Perform the verification using the signature object 
+    // and the digest of the plaintext.
+    // Returns true if the signature is valid, false otherwise
+    return CJWTKitBoringSSL_ECDSA_do_verify(
+        digest,
+        numericCast(digest.count),
+        signature,
+        self.key.c // The EC key associated with the signature.
+    ) == 1 // A return value of 1 indicates success (valid signature).
+}
+\end{minted}
+This snippet shows the verification function used by JWTKit v4. \cite{jwtkit-4}
+\paragraph{Version 5} \mbox{} \\
+The same verification using SwiftCrypto is done as:
+\begin{minted}{swift}
+    public func verify(
+        _ signature: some DataProtocol, 
+        signs plaintext: some DataProtocol
+    ) throws -> Bool {
+        // Calculate the digest (hash)
+        let digest = try self.digest(plaintext)
+
+        // Return whether the signatu
+        return try publicKey.backing.isValidSignature(signature, for: digest)
+    }
+\end{minted}
+\cite{jwtkit}
+The difference between the two is blatant and explains in a practical way how and why SwiftCrypto is a better fit for any modern \gls{sss} library in need of cryptographic support.
+
+\subsection{C vs Swift}
+A note has to be made on the replacement of C with Swift. The safety of Swift in general was discussed in the first chapter, but one cannot emphasise enough how advantageous it is to replace all C calls with Swift. C, being a low level language, is powerful but, at the same time, brings many disadvantages. Using C inside of Swift implies constructs such as \swiftinline{UnsafePointer}s, of which the name is enough to discourage their use. Removing usage of such constructs allows safe memory usage, without having to deal with unfreed memory and having to copy data into a buffer. Swift's ARC reduces the risk of dangling pointers and memory leaks and Swift's type safety allows the compiler to clearly know the type of each variable, therefore usage of constructs like \swiftinline{OpaquePointer}s, which do not reveal the type of a variable and can result in problems at runtime, is avoided. Finally, error handling is improved, as calling BoringSSL functions often implied checking for optionals rather than throwing errors with Swift's normal \swiftinline{do}, \swiftinline{try} and \swiftinline{catch} mechanisms.
+
+\subsection{RSA "Raw" API}
+For handling JWKs (which are not discussed in this thesis, even though JWTKit supports them) the previous version of JWTKit included an RSA key initialiser which used its raw parameters, modulus, exponent and optionally public exponent, to create a key. SwiftCrypto, or rather CryptoExtras, doesn't provide this API, that is why it had to be added manually. This section explains how it was added. \\
+As explained earlier, RSA keys are based on the calculation, or rather the search, of two prime factors, $p$ and $q$. A similar algorithm to the Miller-Rabin primality test was used to calculate those: it can be found in the Appendix \ref{appendix:rsa-primes}. \cite{rsa-algo} After having calculated both prime factors, the chinese remainder theorem \cite{chinese-remainder-th} is used to get the remaining parts of the private key, such as $dp$, $dq$ and $qInv$. These are all components used by RSA internally and contribute to its \gls{asn1} form. In fact, with these components the \gls{asn1} form can be created, specifically using the Swift ASN1 package. This provides utilities to handle all kinds of ASN1 forms using a \swiftinline{DERSerializable} protocol to which such structures can conform to. In JWTKit two were created, one for the RSA public key and one for the private one, following is the private key one:
+\begin{minted}{swift}
+    struct ASN1: DERSerializable {
+        let version: UInt8
+        let modulus: ArraySlice<UInt8>
+        let publicExponent: ArraySlice<UInt8>
+        let privateExponent: ArraySlice<UInt8>
+        let prime1: ArraySlice<UInt8>
+        let prime2: ArraySlice<UInt8>
+        let exponent1: ArraySlice<UInt8>
+        let exponent2: ArraySlice<UInt8>
+        let coefficient: ArraySlice<UInt8>
+    }
+\end{minted} 
+\cite{rfc8017-rsapkcs} 
+The key can then be constructed using this structure:
+\begin{minted}{swift}
+var serializer = DER.Serializer()
+
+guard 
+    let privateKeyDER = try Insecure.RSA.calculatePrivateDER(
+        n: n, 
+        e: e, 
+        d: d
+    ) 
+else {
+    throw RSAError.keyInitializationFailure
+}
+try privateKeyDER.serialize(into: &serializer)
+let privateKey = try _RSA.Signing.PrivateKey(
+    derRepresentation: serializer.serializedBytes
+)
+\end{minted}
+and can be finally used with the usual structure, whether with PKCS\#1-v1.5 or PSS. \cite{jwtkit}
+\section{PSS Addition}
+Although not particularly new, JWTKit 5 introduced the PSS algorithm family to the package. PSS is a slightly more secure version of RSA as it tries to fill the gaps of the traditional RSA PKCS\#1-v1.5 scheme. Chapter 3 already explained how it works, so following is how it was implemented in JWTKit using \latexinline{_CryptoExtras}.
+The PSS algorithm family still uses RSA keys underneath, just the padding used in signing is different, that is why the key structure is the same as traditional RSA signing. All keys in JWTKit 5 basically have structure as the ECDSA one explained in the previous section:
+\begin{minted}{swift}
+public extension Insecure {
+    enum RSA: Sendable {}
+}
+\end{minted}
+a namespace for RSA keys, gated behind the \latexinline{Insecure} namespace to discourage people from using it, and:
+\begin{minted}{swift}
+    public protocol RSAKey: Sendable {}
+\end{minted}
+, a protocol for the keys to conform to.
+Then there are both a \lstinline{PublicKey} and a \lstinline{PrivateKey} structure inside of the namespace and conforming to \lstinline{RSAKey}. 
+The important difference with RSA-PKCS\#1-v1.5 is in the \lstinline{RSASigner}, as that now takes a \lstinline{padding} argument in its initialiser:
+\begin{minted}{swift}
+struct RSASigner: JWTAlgorithm, CryptoSigner {
+    let publicKey: Insecure.RSA.PublicKey
+    let privateKey: Insecure.RSA.PrivateKey?
+    var algorithm: DigestAlgorithm
+    let name: String
+    let padding: _RSA.Signing.Padding
+
+    init(
+        key: some RSAKey, 
+        algorithm: DigestAlgorithm, 
+        name: String, 
+        padding: _RSA.Signing.Padding
+    ) {
+        ...
+    }
+\end{minted}
+This \lstinline{padding} is of type \lstinline{_RSA.Signing.Padding}, an enum inside of \lstinline{_CryptoExtras} which can be either \lstinline{insecurePKCS1v1_5} or \lstinline{PSS}. Now, when adding a signer, JWTKit provides new methods to allow adding the PSS family algorithms, namely
+\begin{minted}{swift}
+@discardableResult
+func addPS256(
+    key: some RSAKey,
+    kid: JWKIdentifier? = nil,
+    parser: some JWTParser = DefaultJWTParser(),
+    serializer: some JWTSerializer = DefaultJWTSerializer()
+) -> Self {
+    add(.init(
+        algorithm: RSASigner(
+            key: key, 
+            algorithm: .sha256, 
+            name: "PS256", 
+            padding: .PSS
+        ),
+        parser: parser,
+        serializer: serializer
+    ),
+    for: kid)
+}
+\end{minted}
+and its other two PS384 and PS512 variations, which just differ in the hashing algorithm.
+This method also spoils two other version 5 novelties: the \lstinline{JWTParser} and the \lstinline{JWTSerializer}. While they were present in the previous version too, they are now public, but they will be explained in more detail later on.
+
+\section{Modern Concurrency Adoption}
+JWTKit 5 also brought \lstinline{Sendable} conformance and modern concurrency to the package. As explained in chapter 1, the \lstinline{Sendable} protocol denotes types which are safe to be sent across \gls{concurrency-domain}s. Conforming types to \lstinline{Sendable} is particularly useful in a library such as JWTKit because, in a Vapor server for example, multiple requests might need to sign or validate JWTs, and \lstinline{Sendable} ensures that the requests access the common tokens in a safe way, preventing issues like data races. Distributed systems are also a big use case for JWTs and \lstinline{Sendable} makes it easy to use these types across different, distributed and concurrent environments. Other than \lstinline{Sendable}, the \lstinline{JWTKeyCollection} (renamed from \lstinline{JWTSigners}) is now an \lstinline{actor}, meaning that access to its shared state is concurrency safe. This requires all methods defined on the actor to be \lstinline{async}, therefore \lstinline{sign} and \lstinline{verify} APIs are now to be \lstinline{await}ed. The little added complexity is  an acceptable downside if it means that all the elements are concurrency safe, especially in a server environment. Adopting \lstinline{Sendable} and modern concurrency is easy: it's enough to start from one type and the compiler warnings will slowly propagate across the whole package, indicating which other types need to be conformed too. In some special cases conformance is not enough and the types' shared state has to be made explicitly thread safe. This did not happen in JWTKit, however it did when updating the JWT package to use the new version of JWTKit. \\
+The idea is that a \lstinline{JWTKeyCollection} instance has to be exposed to the user, and usually this is done by creating a \lstinline{Storage} class to attach to Vapor's \lstinline{Application}. Classes are somewhat problematic to use in concurrency, as they are reference types which are not thread safe by default.
+To solve this issue and make the access to the \lstinline{JWTKeyCollection} thread safe, a type of the SwiftNIO's NIOConcurrencyHelper module was used: 
+\begin{minted}{swift}
+private struct SendableBox: Sendable {
+    var keys: JWTKeyCollection
+}
+        
+private let sendableBox: NIOLockedValueBox<SendableBox>
+            
+var keys: JWTKeyCollection {
+    get {
+        self.sendableBox.withLockedValue { box in
+            box.keys
+        }
+    }
+    set {
+        self.sendableBox.withLockedValue { box in
+            box.keys = newValue
+        }
+    }
+}
+\end{minted}
+This snippet shows the creation of a \swiftinline{Sendable struct} \textit{inside} of the class, containing the instance needed. To access the instance from the class, a computed property exists which does not reference the keys directly, but through \lstinline{NIOLockedValueBox}. This helper from SwiftNIO is used to create a \gls{lock} mechanism around the type it wraps, giving runtime thread safety to the keys' access. While it is not ideal, being the rest of the code \textit{compile time} safe, using a \gls{lock} is the more traditional way of handling sequential access and, while just at runtime, guarantees that there will not be any data races on the property. \cite{swiftnio-docs}
+
+\section{Customisation}
+As previously spoiled a few sections ago, JWTKit 5 introduced some new customisation features for parsing and serialising. The idea behind that is that a lot of definitions and usages exists around the \gls{jose} standard, and maintaining them all in one package can become tricky. This is why it was decided to allow users to implement their own specifications where JWTKit stopped providing them explicitly. 
+
+\subsection{Custom Header Fields}
+The first novelty in regards to customisation is custom headers. While the JWS (RFC 7515) specification lists a number of default headers, of which only the \latexinline{alg} one is mandatory, JOSE headers can contain custom fields too. The header field in JWTKit 5 is a dictionary that looks like:
+\begin{minted}{swift}
+@dynamicMemberLookup
+public struct JWTHeader: Sendable {
+    public var fields: [String: JWTHeaderField]
+
+    public init(fields: [String: JWTHeaderField] = [:]) {
+        self.fields = fields
+    }
+
+    public subscript(dynamicMember member: String) -> JWTHeaderField? {
+        get { fields[member] }
+        set { fields[member] = newValue }
+    }
+}
+\end{minted}
+There are two important observations to be made about this: the \swiftinline{JWTHeaderField} type and the \swiftinline{@dynamicMemberLookup} attribute.
+The \swiftinline{JWTHeaderField} is the actual field inside of the header. It is an \swiftinline{enum} that stores JSON data and it looks like this:
+\begin{minted}{swift}
+public indirect enum JWTHeaderField: Hashable, Sendable, Codable {
+    case null
+    case bool(Bool)
+    case int(Int)
+    case decimal(Double)
+    case string(String)
+    case array([JWTHeaderField])
+    case object([String: JWTHeaderField])
+}
+\end{minted}
+There is actually a lot more code around it (like custom en/decoding and various extensions) but this represents the essence of it.
+Any JOSE-compliant header field can be represented using this \swiftinline{enum} and there are some elegant extensions (which Swift's standard library provides) that allow header fields to be used as Swift primitives. For example, using the following extension:
+\begin{minted}{swift}
+extension JWTHeaderField: ExpressibleByStringLiteral {
+    public init(stringLiteral value: StringLiteralType) {
+        self = .string(value)
+    }
+}
+\end{minted}
+the header field can be expressed as \swiftinline{String}s directly rather than having to pass through the \swiftinline{.string()} syntax. Practically speaking, this is now possible:
+\begin{minted}{diff}
+- token.header["alg"] = JWTHeaderField.string("HS256")
++ token.header["alg"] = "HS256"
+\end{minted}
+Such an extension is provided for every type, namely \swiftinline{String, Int, Bool, Float, Array, Dictionary} and even \swiftinline{nil}. \\
+\swiftinline{@dynamicMemberLookup} on the other hand is an attribute which can be added to types to enable property access as if the properties were directly defined on them, even if they are not. The access to those fields is handled through the \swiftinline{subscript(dynamicMember:)} method. In the case of the \swiftinline{JWTHeader}, the method accesses the \swiftinline{fields} dictionary which contains all header fields of the token. This means the following:
+\begin{minted}{diff}
+- token.header["alg"] = "HS256"
++ token.header.alg?.asString = "HS256"
+\end{minted}
+This is even safely typed, which means that assigning anything else than a \swiftinline{JWTHeaderField} is not allowed. \cite{dml-proposal}
+Additionally, JWTKit provides extension for common header fields (which are enough for most users) that abstract away direct access to the dictionary:
+\begin{minted}{swift}
+var alg: String? {
+    get { self[dynamicMember: "alg"]?.asString }
+    set { self[dynamicMember: "alg"] = newValue.map { .string($0) } }
+}
+\end{minted}
+This is provided for fields like \latexinline{alg}, \latexinline{kid} and more. \\
+Finally,  all of this means that custom header fields can be implemented, for example the \latexinline{b64} header which indicates whether the payload is base64URL encoded or not, simply by using:
+\begin{minted}{swift}
+let token = try await keyCollection.sign(payload, header: ["b64": false])
+\end{minted}
+to add it to the token when signing, and 
+\begin{minted}{swift}
+header.b64?.asString
+\end{minted}
+to access it, in a type safe way. \cite{jwtkit} \cite{rfc7515-jws}
+
+\subsection{Serialising and Parsing}
+While keeping the \latexinline{b64} header field example in mind, some header fields require the structure of the token to change with them. For example, the \latexinline{b64} header field indicates whether a token's payload is base64URL encoded or not. Usually the field is omitted and thus assumed to have the value \swiftinline{true}: that is what a standard JWT token looks like. When the field is present and set to \swiftinline{false} on the other hand, the token will look something like:
+\begin{minted}{text}
+eyJiNjQiOmZhbHNlLCJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+.
+{"name":"Foo","exp":2000000000,"admin":false,"sub":"vapor"}
+.
+NuN8EQPF7AwvnysdpSdFnjwpKO4gf4E2nkGggOPLrE8
+\end{minted}
+As this is a somewhat unorthodox token, but still valid in some scenarios, JWTKit supports it by implementing custom parsing and serialising. Users can choose how to parse and serialise a token according to some standard or to their liking, simply by implementing their own \swiftinline{JWTSerializer} and \swiftinline{JWTParser}.
+The \swiftinline{JWTSerializer} is used to serialise the token from Swift constructs (which means \swiftinline{JWTPayload} and \swiftinline{JWTHeader}) into the compact serialisation form of the token. This is used to sign the token. The \swiftinline{JWTParser} on the other hand does the contrary, parsing the compact serialised token into data that can be used in Swift, usually for verification.
+This can be done as follows: first a custom \swiftinline{JWTSerializer} is created
+\begin{minted}{swift}
+struct CustomSerializer: JWTSerializer {
+    // Here a custom encoder can be used 
+    var jsonEncoder: JWTJSONEncoder = .defaultForJWT
+
+    // This method should return the payload the way the user wants
+    func serialize(
+        _ payload: some JWTPayload, 
+        header: JWTHeader
+    ) throws -> Data {
+        // Check if the b64 header is set. 
+        // If it is, base64URL encode the payload, don't otherwise
+        if header.b64?.asBool == true {
+            try Data(jsonEncoder.encode(payload).base64URLEncodedBytes())
+        } else {
+            try jsonEncoder.encode(payload)
+        }
+    }
+}
+\end{minted}
+Then, a parser needs to be implemented too:
+\begin{minted}{swift}
+struct CustomParser: JWTParser {
+    var jsonDecoder: JWTJSONDecoder = .defaultForJWT
+
+    // This method parses the token into a tuple 
+    // containing the various token's elements
+    func parse<Payload>(
+        _ token: some DataProtocol, 
+        as: Payload.Type
+    ) throws -> (header: JWTHeader, payload: Payload, signature: Data) 
+        where Payload: JWTPayload 
+    {
+        // A helper method is provided to split the token correctly
+        let (encodedHeader, encodedPayload, encodedSignature) = try getTokenParts(token)
+
+        // The header is usually always encoded the same way
+        let header = try jsonDecoder.decode(
+            JWTHeader.self, 
+            from: .init(encodedHeader.base64URLDecodedBytes())
+        )
+
+        // If the b64 header field is non present or true, 
+        // base64URL decode the payload, don't otherwise
+        let payload = if header.b64?.asBool ?? true {
+            try jsonDecoder.decode(
+                Payload.self, from: 
+                .init(encodedPayload.base64URLDecodedBytes())
+            )
+        } else {
+            try jsonDecoder.decode(
+                Payload.self, from: 
+                .init(encodedPayload)
+            )
+        }
+
+        // The signature is usually also always encoded the same way
+        let signature = Data(encodedSignature.base64URLDecodedBytes())
+
+        return (header: header, payload: payload, signature: signature)
+    }
+}
+\end{minted}
+These methods are then both used internally to sign and verify the token, although they do have to be registered first:
+\begin{minted}{swift}
+    let keyCollection = await JWTKeyCollection().addHS256(
+        key: "secret", 
+        parser: CustomParser(), 
+        serializer: CustomSerializer()
+    )
+\end{minted}
+This way, any token handled by that \swiftinline{keyCollection} instance will go through the parser and serialiser defined earlier, for example signing a token as was done in the previous subsection using the \latexinline{b64} header. This API provides JWTKit with a solid foundation to support many options which other packages may be too limited to support, and even specifications that may come in the future, making it a much more flexible package than before. \cite{jwtkit}
+
+\section{X5C Verification}
+The last one of JWTKit 5's novelties touched by this thesis is X5C verification. 
+As shortly defined in chapter 3, the \latexinline{x5c} header parameter in a token contains a chain of \gls{x509} certificates used to validate the authenticity of the token, with each certificate validating the next one up to a root certificate issued by a trusted certificate authority. The root one is supposed valid, and if all other certificates are valid too, it means the token is authentic.
+JWTKit 4 had verification for X5C headers using BoringSSL, but since it was removed a new solution had to be found. Apple provides the swift-certificates package which allows for handling of \gls{x509} certificates and even for verification of certificate chains.
+Exactly that API was used to rewrite the X5C verifier. It is a modern API, allowing for custom policies and a straightforward syntax. The first step is to parse the \latexinline{x5c} header:
+\begin{minted}{swift}
+let parser = DefaultJWTParser(jsonDecoder: jsonDecoder)
+let (header, payload, _) = try parser.parse(token, as: Payload.self)
+
+guard let x5c = header.x5c, !x5c.isEmpty else {
+    throw JWTError.missingX5CHeader
+}
+\end{minted}
+and then map it to an array of certificates
+\begin{minted}{swift}
+let certificates = try certificateData.map {
+    try Certificate(derEncoded: [UInt8]($0))
+}
+\end{minted}
+Finally, a \swiftinline{Verifier} is set up from a trusted store (which is the root certificate) which verifies every certificate on the chain, using the certificate before
+\begin{minted}{swift}
+// Setup the verifier using the predefined trusted store
+var verifier = try Verifier(rootCertificates: trustedStore, policy: {
+    // Use the optional user's custom policy
+    try policy()
+})
+
+// Validate the leaf certificate against the trusted store
+let result = await verifier.validate(
+    leafCertificate: certificates[0], 
+    intermediates: untrustedChain
+)
+
+if case let .couldNotValidate(failures) = result {
+    throw JWTError.invalidX5CChain(reason: "\(failures)")
+}
+\end{minted}
+Once the end of the code is reached, the chain will be valid. \cite{jwtkit}
+
+While this chapter explained all of the changes made to the package, the following, last chapter will speak about the results of this work, diving into some performance benchmarks and talking about the possible future for the JWTKit library.

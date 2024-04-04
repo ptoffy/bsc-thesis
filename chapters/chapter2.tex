@@ -1,0 +1,289 @@
+\chapter{Server Side Swift}
+With features such as type safety, automatic memory management and compile time safety for concurrency, Swift has become the perfect tool for writing server-side applications. 
+% At the time of writing there are a number of different \gls{sss} fameworks, though the most popular one is Vapor.
+The evolution of Swift for server-side development is significantly marked by the introduction of SwiftNIO, a non-blocking I/O framework that enables the development of high-performance and scalable network applications. 
+
+\section{SwiftNIO}
+\textit{SwiftNIO is a cross-platform asynchronous event-driven network application framework for rapid development of maintainable high performance protocol servers and clients.
+It is like Netty, but written for Swift.}\cite{open-source-apple}
+Published by Apple, this low-level networking package aims to be the foundation of Swift based web frameworks such as Vapor. It is equipped with a non blocking architecture which allows execution of operations without having to block the main thread, resulting in ease of scaling and handling of high volumes of traffic.
+
+\subsection{Non-blocking I/O}
+In a traditional, blocking, \gls{io} model, the thread to which a job is assigned (such as a disk read or a network request) gets blocked until the operation completes. This is a straightforward approach which can unfortunately lead to a number of issues:
+\begin{itemize}
+    \item \textbf{inefficient resource utilization}: spawning a thread for each operation, especially in network servers which handle many simultaneous requests, can consume more system resources than needed;
+    \item \textbf{poor scalability}: the system might hit its thread number limit long before reaching CPU or network capacity;
+    \item \textbf{reduced responsiveness}: applications based on blocking \gls{io} can become unresponsive, which is especially bad in \gls{gui} based applications.
+\end{itemize}
+These issues are solved by using non-blocking \gls{io}. In an input-output environment it is better to let a single thread handle multiple connections, hopping from one to another when needed. This means that the program can perform other tasks while waiting for one to finish, which happens often in networking applications as data might not be available right away. For example, reading from a socket might take time and until the whole of the data has been read, it can not be used. The system has two ways of handling this: while doing some other work it might decide to check back every once in a while if the data is available (polling) or it might create a notifier to be alerted when the data is ready (event-driven) and go back and use it once it is. \cite{java-networks} This last approach, the event-driven one, is what is used in SwiftNIO. \cite{swiftnio-docs}
+
+\subsection{Event Driven Architecture}
+If a client is making an HTTP POST request with a large body over a slow network, the server might be able to read the data faster than the client can post it. Rather than waiting for the operation to finish, it makes sense for the system to notify the program when the operation is completed so that the program can dedicate time and resources to other processes and come back to the initial one when the data is ready. This is better than polling, as that would require a structure such as a \swiftinline{while} loop that periodically checks whether the data is ready.
+\cite{java-networks}
+SwiftNIO implements this architecture using \lstinline{EventLoop}s.
+
+\subsection{EventLoops}
+\lstinline{EventLoop}s are one of the foundational blocks of SwiftNIO. An \lstinline{EventLoop} is a programming construct that works like a \swiftinline{while} loop, waiting for events to come in and dispatching them to the appropriate event handler. \cite{kuepper-microservices} \lstinline{EventLoop}s monitor \gls{socket-descriptor}s for readability or writability, using system mechanisms like \lstinline{epoll} on Linux, \lstinline{kqueue} on macOS  and \lstinline{IOCP} on Windows. When an I/O operation is ready (for example, data has arrived on a socket), the \lstinline{EventLoop} triggers the execution of callback functions or channel handlers associated with that operation. \lstinline{EventLoop}s run on a single dedicated thread managing multiple connections and ensuring thread safety. In SwiftNIO, \lstinline{EventLoop}s are grouped into \lstinline{EventLoopGroup}s, which are used to spread work amongst different \lstinline{EventLoop}s, and thus threads. These event loops work independently, each managing its own set of tasks. \cite{swiftnio-docs}
+
+\subsection{Channels and ChannelHandlers}
+While \lstinline{EventLoop}s are the fundamental entity of SwiftNIO, the main structure users have to interact with are \lstinline{Channel}s and \lstinline{ChannelHandler}s. A \lstinline{Channel} represents a single network connection on a socket, acting as the pipeline through which input and output data flows. They are responsible for handling all operations on a connection, such as opening it, closing it, reading from and writing to the network. Although the \lstinline{Channel} reads and writes from and to the connection, it does not process any data, as that is done by the \lstinline{ChannelPipeline}. A \lstinline{ChannelPipeline} is an ordered sequence of \lstinline{ChannelHandler}s, these are simple, reusable constructs which process the data in some way before passing it along to the next \lstinline{ChannelHandler}. When an event is received, it travels through the \lstinline{ChannelPipeline}, with every \lstinline{ChannelHandler} doing its processing on the data. Once the data is processed it is sent to the \textit{network} if the handler is and Outbound handler, and to the \textit{system} if the handler is an Inbound handler. The former ones are used for operations initiated from the inside and that have to go outside, such as network writes, the latter ones are used for the opposite, such as reading data from a socket. \cite{swiftnio-docs}
+
+\subsection{EventLoopFutures}
+The final SwiftNIO-related argument discussed in the thesis are \lstinline{EventLoopFuture}s. The \lstinline{EventLoopFuture} is a generic type that encapsulates a future. \textit{A future is an instance of a class that will have a value in some point in the future.}\cite{kuepper-microservices} It is used to encapsulate a value that is not known yet but will be defined in the future by the \lstinline{EventLoop}, and it is particularly useful when writing asynchronous code, as often network operations can take some time and their result can not be known right away. \cite{swiftnio-docs}
+All asynchronous operations in SwiftNIO return an \lstinline{EventLoopFuture}, that encapsulates the eventual result of that operation. The future is created when the operations starts and fulfilled when it ends, either containing the result when it was successful, or an error if it was not. Either way, a callback can be attached to execute when the operation ends, allowing to handle the result. For example:
+\begin{minted}{swift}
+    let futureResult: EventLoopFuture<String> = ...
+    
+    futureResult.whenComplete { result in
+        switch result {
+        case .success(let value):
+            print("Operation succeeded with \(value)")
+        case .failure(let error):
+            print("Operation failed with \(error)")
+        }
+    }
+\end{minted}
+This snippet creates a future with a \swiftinline{String} which is tied to some asynchronous operation, such as a database or a network read. Once the operation is completed, it calls the \lstinline{whenComplete} method, passing in a closure to handle the result.
+
+While using SwiftNIO can be interesting as it is really powerful, it also has some justified complexity, as users should not be writing low level networking code directly. That's why server-side frameworks exist: to abstract away the complexities of libraries such as SwiftNIO. All of the past topics about SwiftNIO are the building blocks for modern Swift-based server side frameworks, in fact this exploration sets the stage for the next section of the thesis: Vapor.
+
+\section{Vapor}
+Vapor, built by Tanner Nelson in 2016 and now maintained by its core team and hundreds of contributors, is a modular Swift-based framework for writing server-side applications. It is and always has been an open source package, meaning that everyone can contribute to it, and since version 3 it is based on SwiftNIO, Apple's own open source networking \gls{io} library. This part of the thesis will go about explaining the key features of Vapor and the reasons why it is as popular as it is.
+
+\subsection{Application and entrypoint}
+In Vapor, everything revolves around the \lstinline{Application} type. This type represents the actual server being run. The application is usually started using an \lstinline{entrypoint.swift} file which in the template looks like this:
+\begin{minted}{swift}
+@main
+enum Entrypoint {
+    static func main() async throws {
+        // detect environment
+        var env = try Environment.detect()
+        // initialise logging system using environment
+        try LoggingSystem.bootstrap(from: &env)
+
+        // create application
+        let app = Application(env)
+        defer { app.shutdown() }
+        
+        do {
+            // call the configure method on the application
+            try await configure(app)
+        } catch {
+            app.logger.report(error: error)
+            throw error
+        }
+        // run the application
+        try await app.execute()
+    }
+}
+\end{minted}
+This is the basic starting block of a Vapor server. Inside the \lstinline{configure(:)} method the app can be set up instantiating various services such as controllers, database connections and more.\cite{vapor-docs}
+
+\subsection{Routing}
+The likely more apparent feature in a backend framework is routing, which is defining how the application responds to an incoming HTTP request. For example, to create an endpoint for \lstinline{GET} requests on the "hello" route in Vapor it is as simple as:
+\begin{minted}{swift}
+    app.get("hello") { req in 
+        "Hello, world!" 
+    }
+\end{minted}
+Now when a \lstinline{GET}  requests comes in at the "hello" endpoint, the server will return "Hello, world".
+With route parameters this can be simply expanded as
+\begin{minted}{swift}
+    app.get("hello", ":name") { req in 
+        let name = req.parameters.get("name")!
+        return "Hello, \(name)!"
+    }
+\end{minted}
+At the \lstinline{GET} "hello/foo" route, the server will return "Hello, foo!"
+The last example explains how Vapor uses its \lstinline{Content} API to read a number of query parameters:
+\begin{minted}{swift}
+    struct SomeContent: Content {
+        // query parameters should always be optional
+        let name: String?
+        let age: Int?
+    }
+
+    app.get("hello") { req in 
+        let decoded = try req.query.decode(SomeContent.self)
+        return "Hello, \(decoded.name ?? "No name")! You are \(decoded.age ?? 99) years old."
+    }
+\end{minted}
+At the "hello" \lstinline{GET} route with the following query:
+\begin{minted}{sh}
+    http://localhost:8080/hello?name=foo&age=42
+\end{minted}
+the server will output "Hello, foo! You are 42 years old." \cite{vapor-docs}
+
+\subsection{Fluent}
+Any respectable server-side library needs access to persistent storage, usually SQL or NoSQL databases. In Vapor this role is played by the Fluent package, a database-agnostic library which provides APIs to connect to various databases. More precisely, Fluent is an ORM or object relational mapping tool, which is a library that creates a relationship between the instances of a database to objects in code. 
+Using an ORM can make the developer's life much easier as it can abstract away the complexity of having to use the database directly by allowing to write database code using a high level language rather than SQL queries directly. Plus, Swift's strict type safety ensures that only valid queries are constructed. 
+\subsubsection{Database Drivers and Setup}
+Thanks to the different drivers provided by Vapor, Fluent can connect to different databases:
+\begin{itemize}
+    \item PostgreSQL
+    \item SQLite
+    \item MySQL
+\end{itemize}
+Fluent does not care about which database is being used in a certain query as it will be the underlying driver which will translate the Swift code into the respective \gls{dml}. Each database conforms to the \lstinline{Database} protocol which allows for interchangeability between different underlying databases. For a database to be used it's enough for it to be registered in the \lstinline{configure(app:)} method, for example, using a Postgres database:
+\begin{minted}{swift}
+    import Fluent
+    import FluentPostgresDriver
+
+    try app.databases.use(.postgres(url: "<connection string>"), as: .psql)
+\end{minted}
+\cite{vapor-docs}
+
+\subsubsection{Model}
+Each table in the databases that needs to be mapped to an object can be represented in code as a \lstinline{Model}. Models can have one ore more properties which represent the columns in the table, one of which is the identifier required by a \lstinline{Model}. For example:
+\begin{minted}{swift}
+    final class User: Model {
+        static let schema = "users"
+
+        @ID(key: .id)
+        var id: UUID?
+    
+        @Field(key: "name")
+        var name: String
+    }
+\end{minted}
+In this example the first two fields are required while the third one is optional. The \lstinline{schema} indicates the name of the table in the database while the \lstinline{id} is the identifier of the model.
+The \lstinline{@ID} and \lstinline{@Field} annotations are \gls{property-wrapper}s added to the fields which indicate how they are stored in the database. \cite{vapor-docs}
+
+\subsubsection{Migrations}
+The migrations API allows implementing structural changes to the database using DDL (Data Definition Language).
+Migrations are used for all those operations that \textit{change} the structure of the database rather than working on the data itself. For example they can be used to create tables, delete them or modify their structure such as adding or removing columns.
+Fluent automatically keeps track of all migrations run so there's no need to access the database directly for such operations, allowing for reversion of already run migrations, similar to how a version control system works. All migrations are atomic, meaning that if an error is encountered during a migration, the system will be reverted to the state before the migration, keeping the database intact and safe. 
+Migrations can be defined as follows:
+\begin{minted}{swift}
+struct CreateUserMigration: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        try await database.schema(User.schema)
+            .id()
+            .field("name", .string, .required)
+            .create()
+    }
+
+    func revert(on database: Database) async throws {
+        try await database.schema(User.schema).delete()
+    }
+}
+\end{minted}
+The \lstinline{prepare} method does the actual changes to the database, while the \lstinline{revert} method is called when the changed needs to be, in fact, reverted. In the example above the \lstinline{User} table is created with a required "name" column of type string. The \lstinline{revert} simply deletes the user table, which is the reversion of what the \lstinline{prepare} method does.
+Migrations can easily be added to the \lstinline{configure(app:)} method:
+\begin{minted}{swift}
+app.migrations.add(CreateUserMigration())
+\end{minted}
+This adds the \lstinline{CreateUserMigration} to the list of migrations of the app.
+Migrations can then be either executed using the \lstinline{migrate} command (with the \lstinline{--revert} flag if it's to revert the migration):
+\begin{minted}{sh}
+swift run App migrate [--revert]
+\end{minted}
+or automatically using:
+\begin{minted}{swift}
+try await app.autoMigrate()
+\end{minted}
+By adding this command to the \lstinline{configure(app:)} method, migrations are going to be run (more specifically, the \lstinline{prepare} method) the next time the app is spun up. Since Fluent keeps track of all executed migrations, they are going to be executed only once unless they get reverted. \cite{vapor-docs}
+
+\subsubsection{Query}
+Fluent also provides an API to use DML (Data Manipulation Language) on the database. It supports most of SQL's (and NoSQL's, but being database agnostic, the high level API is the same) constructs to create, read, update and delete models. Using the same \lstinline{User} model as before, all users called "Foo", ordered alphabetically by name and with their \swiftinline{Profile}s can be retrieved using:
+\begin{minted}{swift}
+let users = try await User.query(on: database)
+    .join(Profile.self, on:  |\textbackslash|User.|\$|id ==  |\textbackslash|Profile.|\$|userID)
+    .filter(|\textbackslash|.|\$|name == "Foo")
+    .sort|\textbackslash|.|\$|name)
+    .all()
+\end{minted}
+The \lstinline{User.query} expression returns a \lstinline{QueryBuilder} for the given model, which allows the creation of a type safe query, providing the user compile time information of whether the query will yield an error or not when executed on the database. It will be translated to something like:
+\begin{minted}{sql}
+SELECT users.* FROM users
+JOIN profiles ON users.id = profiles.user_id
+WHERE users.name = 'Foo'
+ORDER BY users.name ASC;
+\end{minted}
+\cite{vapor-docs}
+
+By abstracting direct database access and leveraging Swift's strong typing, Fluent makes persistent storage management using Vapor both efficient and enjoyable. While it introduces an additional layer of abstraction, the benefits in terms of development speed, code quality, and maintenance are significant. Being a standalone package, Fluent (or rather FluentKit, as Fluent is the integration package which bridges Fluent to Vapor) can even be used without Vapor.
+
+\subsection{Authentication and Authorisation}
+Authentication and authorisation are both key concepts used to protect systems and information. While authentication is the act of identifying a user, authorisation means granting them access to determined resources or actions around them. \cite{chapman-auth} Some resources need to be protected and not  accessible at all times and that's where authentication and authorisation come in. Vapor has built-in support for both.
+
+\subsubsection{Authentication}
+Usually authentication revolves around validating user credentials, such as email and password, against stored data. To implement authentication a data model is needed which conforms to \lstinline{Authenticatable}:
+\begin{minted}{swift}
+    final class User: Model, Content {
+        static let schema = "users"
+    
+        @ID(key: .id)
+        var id: UUID?
+    
+        @Field(key: "email")
+        var email: String
+    
+        @Field(key: "passwordHash")
+        var passwordHash: String
+    }
+    
+    extension User: Authenticatable {}
+\end{minted}
+This snippet takes the \lstinline{User} model created earlier, adds email and hashed password fields and conforms it to the \lstinline{Authenticatable} protocol. This protocol defines that a model can be authenticated and can be integrated with Vapor's various authentication providers and middleware, allowing for flexible and secure authentication mechanisms.
+Afterwards the mode of authentication needs to be specified, for example using password authentication:
+\begin{minted}{swift}
+    extension User: ModelAuthenticatable {
+        static let usernameKey = |\textbackslash|User.|\$|email
+        static let passwordHashKey = |\textbackslash|User.|\$|passwordHash
+    
+        func verify(password: String) throws -> Bool {
+            try Bcrypt.verify(password, created: self.passwordHash)
+        }
+    }
+\end{minted}
+This conforms the model to \lstinline{ModelAuthenticatable}, which requires the definition of the two fields that will be verified during authentication and a method defining how the password should be verified, in this case using \lstinline{Bcrypt}.
+Finally, the user can be authenticated during login:
+\begin{minted}{swift}
+    let passwordProtected = app.grouped(User.authenticator())
+    passwordProtected.post("login") { req -> User in
+        try req.auth.require(User.self)
+    }
+\end{minted}
+When POSTing the "login" route, if the credentials are correct the user will be logged in and their data will be returned, otherwise an unauthorised error will be thrown. \cite{vapor-docs}
+
+\subsubsection{Authorisation}
+Authorisation is the act of giving a user the privileges they deserve. This can be done, for example, using role-based access. This pattern involves giving each user a role and authorising certain operations based on that role. A role field could be added to the previous model:
+\begin{minted}{swift}
+enum UserRole: String {
+    case admin
+    case user
+}
+
+final class User: Model, Content {
+    ...
+    
+    @Field(key: "role")
+    var role: UserRole
+}
+\end{minted}
+And then adding some \swiftinline{Middleware} which checks that the user is an admin:
+\begin{minted}{swift}
+struct EnsureAdminUserMiddleware: AsyncMiddleware {
+    func respond(
+        to request: Request, 
+        chainingTo next: AsyncResponder
+    ) async throws -> Response {
+        guard 
+            let user = request.auth.get(User.self), 
+            user.role == .admin 
+        else {
+            throw Abort(.unauthorized)
+        }
+        return try await next.respond(to: request)
+    }
+}
+\end{minted}
+This middleware ensures that the user accessing a certain resource is an admin and throws an unauthorised error otherwise. It can be registered to a certain route or route group using:
+\begin{minted}{swift}
+    let protectedRoutes = app.grouped(EnsureAdminUserMiddleware())
+    protectedRoutes.get("admin-only", use: adminOnlyHandler)
+\end{minted}
+This snippet will protect the GET route on the "admin-only" endpoint from being accessed by non-admin users. \cite{vapor-docs}
+
+Having explored the foundational elements of authentication and authorisation within Vapor, the next chapter in this thesis will delve into another, more language agnostic aspect of modern web security: JSON Web Tokens (JWTs).

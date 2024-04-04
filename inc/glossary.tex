@@ -1,0 +1,108 @@
+\newglossaryentry{concurrency-domain}{
+    name = concurrency domain,
+    description = The scope in which mutable state resides and where concurrent operations occur on said state. Operations inside of a concurrency domain are usually safe
+}
+
+\newglossaryentry{marker-protocol}{
+    name = marker protocol,
+    description = A protocol not used to implement some specific behaviour but rather to indicate that a type conforms to some rule or characteristic
+}
+
+\newglossaryentry{race-condition}{
+    name = race condition,
+    description = Condition in which the outcome of a task is not deterministic because two tasks are accessing a resource at the same time and the output can change depending on which task finishes first
+}
+
+\newglossaryentry{deadlock}{
+    name = deadlock,
+    description = Standstill situation of two tasks not being able to continue their execution as both are waiting on each other to finish and free up a resource the other one need
+}
+
+\newglossaryentry{data-race}{
+    name = data race,
+    description = A specific \gls{race-condition} in which at least one of the tasks accessing the data needs to write on it
+}
+
+\newglossaryentry{dml}{
+    name = data manipulation language,
+    description = Subset of SQL (Structured Query Language) that is used for accessing and manipulating data in a database
+}
+
+\newglossaryentry{property-wrapper}{
+    name = property wrapper,
+    description = Accessor type which can be added to a property to add additional behaviour to their getter and setter
+}
+
+\newacronym{sss}{SSS}{Server Side Swift}
+
+\newacronym{ddl}{DDL}{Data Definition Language}
+
+\newacronym{io}{I/O}{Input-Output}
+
+\newacronym{gui}{GUI}{Graphical User Interface}
+
+\newglossaryentry{socket-descriptor}{
+    name = socket descriptor,
+    description = Integer that uniquely identifies a socket. It's used to manage and reference open sockets for various network operations
+}
+
+\newacronym{jwt}{JWT}{JSON Web Token}
+
+\newglossaryentry{claim}{
+    name = claim,
+    description = A piece of information asserted about a subject. A claim is represented as a name/value pair consisting of a Claim Name and a Claim Value \cite{rfc7519-jwt}
+}
+
+\newglossaryentry{unix-time}{
+    name = Unix time,
+    description = {Number of seconds elapsed since the Unix epoch, which is 00:00:00 UTC on 1 January 1970. This representation was born as the Unix OS default system time and is widely used since}
+}
+
+\newglossaryentry{encoding}{
+    name = encoding,
+    description = {process of converting data from one form into another according to a set of rules or a specific format. This is often done to prepare data for transfer, storage, or compatibility purposes across different systems}
+}
+
+\newacronym{jws}{JWS}{JSON Web Signature}
+
+\newacronym{mac}{MAC}{Message Authentication Code}
+
+\newglossaryentry{non-singular}{
+    name = non-singular,
+    description = {type of curve in algebraic geometry that does not have any singular points. A singular point on a curve is a point where the curve either crosses itself, has a cusp (a point where the curve has a sharp turn), or the derivative (slope) of the curve does not exist}
+}
+
+\newacronym{nist}{NIST}{National Institute of Standards and Technology}
+
+\newglossaryentry{salt}{
+    name = salt,
+    description = random value sometimes added to messages before they get processed by a cryptographic function. This is done to promote uniqueness of the resulting output
+}
+
+\newacronym{rsa}{RSA}{Rivest-Shamir-Adleman}
+
+\newacronym{pss}{PSS}{Probabilistic Signature Scheme}
+
+\newacronym{jwa}{JWA}{JSON Web Algorithms}
+
+\newacronym{ca}{CA}{Certificate Authority}
+
+\newglossaryentrywithacronym{pem}{PEM}{Privacy Enhanced Mail}{
+    base64 format for storing and transmitting cryptographic keys, certificates, and other sensitive data
+}
+
+\newglossaryentry{lock}{
+    name = lock,
+    description = {synchronisation mechanism used in concurrent programming to prevent multiple threads from accessing a shared resource or a critical section of code at the same time. When a thread acquires a lock, it gains exclusive access to the protected resource. Other threads attempting to acquire the same lock are blocked until the lock is released by the holding thread}
+}
+
+\newglossaryentrywithacronym{jose}{JOSE}{JavaScript Object Signing and Encryption}{
+    set of specifications designed to secure data through JSON-based mechanisms. It groups many standards under one umbrella, such as JWT, JWS and JWA
+}
+
+\newglossaryentry{x509}{
+    name = X.509,
+    description = {standard defining the format of public key certificates. An X.509 certificate contains information such as the certificate holder's name, the certificate's serial number, expiration dates, the public key, and the digital signature of the certificate authority (CA) that issued the certificate, thereby ensuring the authenticity of the public key for secure communications}
+}
+
+\newglossaryentrywithacronym{asn1}{ASN.1}{Abstract Syntax Notation One}{standard interface description language for defining data structures that can be serialised and deserialised in a cross-platform way. It is widely used in telecommunications and computer networking, and extensively in cryptography, to specify the format of data being sent across networks or stored}

@@ -1,0 +1,134 @@
+% !TeX root = ../main.tex
+\usepackage{a4wide}
+
+\usepackage[utf8]{inputenc}
+
+\usepackage[english]{babel}
+
+\usepackage{graphicx}  % To include graphics
+\usepackage{titlesec}  % To customize titles
+\usepackage{titling}   % To customize the title page
+\usepackage{titlepic}  % To insert a picture in the title page
+\usepackage{fontspec}  % For pretty fonts
+\usepackage{minted}    % Code highlighting
+\usepackage{amsfonts}  % To include maths symbols
+\usepackage{enumitem}  % Style itemize items
+\usepackage{multicol}  % To have multiple columns in a page
+
+\usepackage{mdframed}
+\usepackage{listings} % To include code
+\usepackage{geometry} % To set the dimensions of the document
+\usepackage{url} % To use URLs in the bibliography
+\usepackage{hyperref} % To reference sections in text
+\usepackage[acronym]{glossaries}
+\usepackage{glossary-mcols}
+
+% Code settings 
+
+\usepackage{lstautogobble}                  % Fix relative indenting
+\usepackage[usenames,dvipsnames,svgnames]{xcolor}    % Code coloring
+\usepackage{zi4}                            % Nice font
+\usepackage{booktabs}
+
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17} 
+
+\definecolor{bluekeywords}{rgb}{0.13, 0.13, 1}
+\definecolor{greycomments}{gray}{0.5}
+\definecolor{redstrings}{rgb}{0.9, 0, 0}
+\definecolor{graynumbers}{rgb}{0.5, 0.5, 0.5}
+\definecolor{darkergreen}{rgb}{0,0.5,0}
+\definecolor{darkerred}{rgb}{0.9,0,0}
+% \definecolor{purplekeywords}{rgb}{0.6274509803921569, 0.27058823529411763, 0.6235294117647059}
+
+\usemintedstyle{manni}
+\newmintinline{latex}{}
+\newmintinline{swift}{}
+
+\setmonofont{Inconsolata}
+
+\setminted {
+    autogobble,
+    breaklines=true,
+    breakanywhere=false,
+    frame=leftline,
+    framesep=12pt,
+    numbersep=5pt,
+    tabsize=4,
+    escapeinside=||
+}
+
+\newminted{swift}{
+    autogobble,
+    breaklines=true,
+    breakanywhere=false,
+    frame=leftline,
+    framesep=12pt,
+    numbersep=5pt,
+    tabsize=4,
+    escapeinside=||
+}
+
+\lstset{
+    language=Swift,
+    autogobble,
+    columns=fullflexible,
+    showspaces=false,
+    showtabs=false,
+    breaklines=true,
+    showstringspaces=false,
+    breakatwhitespace=true,
+    escapeinside={(*@}{@*)},
+    keywordstyle=\color{RubineRed}\bfseries,
+    morecomment=[l]{//},
+    commentstyle=\color{greycomments},
+    stringstyle=\color{redstrings},
+    numberstyle=\color{blue},
+    basicstyle=\ttfamily,
+    frame=l,
+    framesep=12pt,
+    xleftmargin=12pt,
+    tabsize=4,
+    captionpos=b,
+}
+
+% used to create markdown-like quotes
+\newmdenv[
+  % leftmargin=10pt,
+  % rightmargin=10pt,
+  innerleftmargin=10pt,
+  innerrightmargin=10pt,
+  linecolor=gray,
+  backgroundcolor=Gainsboro!50,
+  topline=false,
+  bottomline=false,
+  rightline=false,
+  linewidth=2pt
+]{customblockquote}
+
+\newcommand{\note}[2]{
+  \begin{customblockquote}
+    \textbf{#1} \vspace{0.2em} \\ 
+    #2
+  \end{customblockquote}
+}
+
+
+% Command to create a glossary entry with correspondent acronym.
+% Args: 1: identifier, 2: acronym/name, 3: long name, 4: description
+\newcommand{\newglossaryentrywithacronym}[4]{
+    %%% The glossary entry the acronym links to   
+    \newglossaryentry{#1_gls}{
+        name={#3}, % Acronym as it appears in the glossary
+        description={#4} % Description
+    }
+
+    % Acronym pointing to glossary
+    \newglossaryentry{#1}{
+        type=\acronymtype,
+        name={#2}, % Acronym name
+        description={#3}, % Long name
+        first={#3 (#2)\glsadd{#1_gls}}, % How it first appears: long name (acronym)
+        see=[Glossary:]{#1_gls} % Link to the full glossary entry
+    }
+}
